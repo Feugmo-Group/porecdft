@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "porecdft"
+version = "0.1.0"
+description = "Modular 3D classical density functional theory for gas adsorption in nanoporous materials"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Anupom Roy", email = "a7roy@uwaterloo.ca" },
+  { name = "Conrard Giresse Tetsassi Feugmo", email = "cgtetsas@uwaterloo.ca" },
+]
+keywords = [
+  "classical DFT",
+  "gas adsorption",
+  "MOF",
+  "COF",
+  "nanoporous materials",
+  "CO2 capture",
+  "fundamental measure theory",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+  "numpy>=2.0",
+  "scipy>=1.10",
+  "matplotlib>=3.8",
+  "pymatgen>=2024.1",
+]
+
+[project.optional-dependencies]
+jax = [
+  "jax>=0.4",
+  "jaxlib>=0.4",
+]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov",
+  "ruff",
+]
+all = [
+  "porecdft[jax,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/Feugmo-Group/porecdft"
+Repository = "https://github.com/Feugmo-Group/porecdft"
+Issues = "https://github.com/Feugmo-Group/porecdft/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+exclude = [
+  "applications/",
+  "graphify-out/",
+  "__pycache__/",
+  "*.pyc",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
