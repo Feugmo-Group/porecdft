@@ -21,6 +21,30 @@ The COâ‚‚/aluminum-formate (ALF) system is the primary validation benchmark; Hâ‚
 
 ## Installation
 
+### Recommended: uv (fast)
+
+[uv](https://docs.astral.sh/uv/) is the recommended way to install porecdft. It resolves dependencies in seconds and creates an isolated environment automatically.
+
+```bash
+# 1. Install uv (once)
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
+# or: pip install uv
+
+# 2. Clone the repository
+git clone https://github.com/Feugmo-Group/porecdft.git
+cd porecdft
+
+# 3. Create a virtual environment and install
+uv venv                        # creates .venv/
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+uv pip install -e .            # core install (NumPy, SciPy, pymatgen, matplotlib)
+
+# 4. Optional: install JAX for GPU-accelerated Vext computation
+uv pip install -e ".[jax]"
+```
+
+### pip / conda
+
 ```bash
 git clone https://github.com/Feugmo-Group/porecdft.git
 cd porecdft
@@ -29,14 +53,14 @@ pip install -e .
 
 ### Requirements
 
-| Package | Version tested |
-|---------|----------------|
-| Python  | 3.10+          |
-| NumPy   | 2.3            |
-| JAX     | 0.6            |
-| SciPy   | 1.15           |
-| pymatgen | 2025.6+       |
-| matplotlib | 3.10        |
+| Package    | Minimum | Tested  |
+|------------|---------|---------|
+| Python     | 3.10    | 3.12    |
+| NumPy      | 2.0     | 2.3     |
+| SciPy      | 1.10    | 1.15    |
+| pymatgen   | 2024.1  | 2025.6  |
+| matplotlib | 3.8     | 3.10    |
+| JAX *(opt)*| 0.4     | 0.6     |
 
 > **Note:** CIF files are read with `pymatgen.io.cif`. The `ase` package is **not** required.
 
