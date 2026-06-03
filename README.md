@@ -230,8 +230,6 @@ If you use porecdft in your research, please cite:
 
 > Roy, A.; Tetsassi Feugmo, C. G. *A modular classical density-functional framework for gas adsorption in nanoporous materials: from first-principles binding energies to kinetic molecular sieving.* 2026, in preparation.
 
-The package is archived on Zenodo: [10.5281/zenodo.19008858](https://zenodo.org/records/19008858)
-
 ---
 
 ## License
