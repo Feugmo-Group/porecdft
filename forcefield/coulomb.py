@@ -135,3 +135,26 @@ class CoulombPotential(Potential):
             phi = np.where(mask, self._phi(r_safe), 0.0)
             total += q_s * (phi * host_q[None, :]).sum(axis=1)
         return total
+
+
+class SmearCoulombPotential(CoulombPotential):
+    """Gaussian-smeared Coulomb potential — a convenience subclass of CoulombPotential.
+
+    Equivalent to ``CoulombPotential(fluid_charges, method="smeared", gauss_width=gauss_width)``.
+    The smearing avoids singularities at short host–fluid distances that arise when
+    Hirshfeld charges and a close-contact geometry (e.g. ALF formate-H at ~2.5 Å) are
+    combined with point-charge Coulomb.
+    """
+
+    def __init__(
+        self,
+        fluid_charges: dict[str, float],
+        gauss_width: float = 1.0,
+        cutoff: float = 15.0,
+    ):
+        super().__init__(
+            fluid_charges=fluid_charges,
+            cutoff=cutoff,
+            method="smeared",
+            gauss_width=gauss_width,
+        )

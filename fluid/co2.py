@@ -63,6 +63,10 @@ TraPPE_CO2 = Fluid(
     molar_mass=44.01,
 )
 
+# Canonical alias used in README examples and application notebooks
+CO2_EPM2 = EPM2_CO2
+CO2_TraPPE = TraPPE_CO2
+
 # ---- Single-site LJ ------------------------------------------------------
 _SS_FF = {"CO2": FFEntry("CO2", 3.017, 85.671, "mTraFF/Garcia-Sanchez2009")}
 SingleSiteLJ_CO2 = Fluid(

@@ -10,9 +10,10 @@ Future:
 
 from porecdft.functional.association import (
     AssociationSite,
-    WertheimiAssociation,
+    WertheimAssociation,
 )
 from porecdft.functional.fmt import (
+    FMTFunctional,
     WeightedDensities,
     make_k_grid,
     make_fmt_weights_hat,
@@ -25,7 +26,8 @@ from porecdft.functional import fmt_weights
 
 __all__ = [
     "AssociationSite",
-    "WertheimiAssociation",
+    "WertheimAssociation",
+    "FMTFunctional",
     "WeightedDensities",
     "make_k_grid",
     "make_fmt_weights_hat",
