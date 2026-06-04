@@ -31,7 +31,7 @@ Additive loading contribution (molecules per unit cell):
 
 Usage
 -----
->>> assoc = WertheimiAssociation.from_host_element(host, "H", energy_K=800.0, kappa_A3=30.0)
+>>> assoc = WertheimAssociation.from_host_element(host, "H", energy_K=800.0, kappa_A3=30.0)
 >>> c1 = assoc.c1_correction(rho_grid, grid_xyz, T_K=298.0)
 >>> N_extra = assoc.loading_contribution(rho_grid, grid_xyz, dV_A3, T_K=298.0)
 """
@@ -61,7 +61,7 @@ class AssociationSite:
 
 
 @dataclass
-class WertheimiAssociation:
+class WertheimAssociation:
     """Collection of host-fluid association sites (Wertheim TPT-1).
 
     Parameters
@@ -87,7 +87,7 @@ class WertheimiAssociation:
         positions: np.ndarray,    # (M, 3) Å
         energy_K: float | Sequence[float],
         kappa_A3: float | Sequence[float],
-    ) -> "WertheimiAssociation":
+    ) -> "WertheimAssociation":
         """Build from an array of site positions with shared or per-site parameters."""
         M = len(positions)
         energies = np.broadcast_to(np.asarray(energy_K, dtype=float), (M,))
@@ -106,7 +106,7 @@ class WertheimiAssociation:
         element: str,
         energy_K: float | Sequence[float],
         kappa_A3: float | Sequence[float],
-    ) -> "WertheimiAssociation":
+    ) -> "WertheimAssociation":
         """Extract all atoms of ``element`` from ``host`` as association sites."""
         mask = host.select(element)
         positions = host.positions[mask]

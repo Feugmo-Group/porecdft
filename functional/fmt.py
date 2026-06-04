@@ -174,6 +174,42 @@ def compute_c1(
     return jnp.fft.ifftn(c1_hat).real
 
 
+@dataclass
+class FMTFunctional:
+    """Convenience wrapper around the aWBII FMT functions.
+
+    Parameters
+    ----------
+    sigma_HS : float
+        Hard-sphere diameter in Å.
+    model : str
+        Functional variant — ``"aWBII"`` (default) or ``"WBII"``.
+
+    Usage
+    -----
+    >>> fmt = FMTFunctional(sigma_HS=3.3)
+    >>> c1_field = fmt.c1(rho_grid, w2_hat, w3_hat, w2vec_hat)
+    >>> c1_ref   = fmt.c1_bulk(rho_bulk)
+    """
+    sigma_HS: float
+    model: str = "aWBII"
+
+    def c1(
+        self,
+        rho: jnp.ndarray,
+        w2_hat,
+        w3_hat,
+        w2vec_hat,
+    ) -> jnp.ndarray:
+        """c¹_HS(r) on the grid. Pre-compute weights with make_fmt_weights_hat."""
+        wd = compute_weighted_densities(rho, w2_hat, w3_hat, w2vec_hat, self.sigma_HS)
+        return compute_c1(rho, wd, w2_hat, w3_hat, w2vec_hat, self.sigma_HS, self.model)
+
+    def c1_bulk(self, rho_bulk: float) -> float:
+        """c¹_HS for a uniform fluid at ρ_bulk — use as the reference offset."""
+        return bulk_c1(rho_bulk, self.sigma_HS, self.model)
+
+
 def bulk_c1(rho_bulk: float, sigma: float, model: str = "aWBII") -> float:
     """c¹_HS for a uniform bulk fluid at density ρ_bulk — needed as a reference."""
     n0 = rho_bulk

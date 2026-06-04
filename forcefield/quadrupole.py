@@ -85,3 +85,7 @@ class QuadrupoleEFGPotential(Potential):
         directional = float(u @ hess @ u)
         v = 0.75 * self.theta_zz * directional
         return PotentialEnergy(total=v, parts={"Quad": v})
+
+
+# Short alias for convenience
+QuadrupolePotential = QuadrupoleEFGPotential
