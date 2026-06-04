@@ -161,24 +161,23 @@ vext_data = build_vext_on_grid(
 import jax.numpy as jnp
 from porecdft.functional.fmt import FMTFunctional, make_k_grid, make_fmt_weights_hat
 from porecdft.solver.anderson import anderson_solve
-from porecdft.eos.ideal_gas import ideal_gas_density
+from porecdft.eos.ideal_gas import density_from_pressure
 
 sigma_HS = 3.3          # hard-sphere diameter (Å) for CO₂ in ALF
 T_K      = 298.0
 pressure_bar = 1.0
 
-# Bulk density from equation of state (mol/L → molecules/Å³)
-rho_bulk = ideal_gas_density(T_K, pressure_bar)
+# Bulk number density in molecules/Å³ from ideal gas (good to < 1% for CO₂ at T≥273 K, p≤10 bar)
+rho_bulk = density_from_pressure(pressure_bar, T_K)   # note: pressure first, temperature second
 
 shape = vext_data["grid_shape"]
 fmt = FMTFunctional(sigma_HS=sigma_HS)
 
-# Build Fourier-space weight functions once (reuse inside the solver loop)
-# grid spacing dV and shape are needed to derive dx, dy, dz
+# Build Fourier-space weight functions once (reuse inside the solver loop).
+# dx is the voxel edge length: for a regular grid dV = dx·dy·dz and for a
+# cubic cell dx = dy = dz = dV^(1/3).
 dV = vext_data["dV"]
-cell_volume = dV * shape[0] * shape[1] * shape[2]
-dx = (cell_volume / (shape[1] * shape[2])) ** (1/3)   # approximate; exact for cubic cells
-dy = dz = dx
+dx = dy = dz = dV ** (1.0 / 3.0)   # exact for cubic cells (ALF is cubic Im-3)
 KX, KY, KZ, K = make_k_grid(shape, dx, dy, dz)
 w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(K, KX, KY, KZ, sigma_HS)
 
@@ -320,9 +319,7 @@ fmt   = FMTFunctional(sigma_HS=sigma_HS)
 shape = vext_data["grid_shape"]
 dV    = vext_data["dV"]
 
-cell_volume = dV * shape[0] * shape[1] * shape[2]
-# For general (non-cubic) cells derive dx/dy/dz from the lattice vectors
-dx = dy = dz = cell_volume ** (1/3) / shape[0] ** (1/3)  # approximate; exact for cubic
+dx = dy = dz = dV ** (1.0 / 3.0)   # exact for cubic cells (COFs are tetragonal — use lattice vectors for precise non-cubic grids)
 
 KX, KY, KZ, K = make_k_grid(shape, dx, dy, dz)
 w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(K, KX, KY, KZ, sigma_HS)
