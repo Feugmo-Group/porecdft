@@ -23,6 +23,7 @@ from porecdft.functional.fmt import (
     bulk_c1,
 )
 from porecdft.functional import fmt_weights
+from porecdft.functional.elastic import ElasticPenalty, scale_host
 
 __all__ = [
     "AssociationSite",
@@ -36,4 +37,6 @@ __all__ = [
     "compute_c1",
     "bulk_c1",
     "fmt_weights",
+    "ElasticPenalty",
+    "scale_host",
 ]
