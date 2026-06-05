@@ -183,13 +183,15 @@ plt.colorbar(im_b, ax=ax_b, label="V$_{ext}$ (K)", shrink=0.85)
 tile_11 = V_tiled[Nx:2*Nx, Ny:2*Ny, Nz:2*Nz]
 diff    = tile_11 - V_uc
 finite  = np.abs(V_uc) < 1e5
-vd = max(np.abs(diff[finite]).max(), 1.0)
+actual_max_diff = float(np.abs(diff[finite]).max())   # should be 0.0 by np.tile
+vd_plot = max(actual_max_diff, 1e-12)                  # avoid zero color range
 ax_c = fig.add_subplot(gs[0, 2])
-im_c = ax_c.imshow(np.clip(diff[:, :, iz], -vd, vd).T,
-                   origin="lower", cmap="bwr", vmin=-vd, vmax=vd,
+im_c = ax_c.imshow(np.clip(diff[:, :, iz], -vd_plot, vd_plot).T,
+                   origin="lower", cmap="bwr", vmin=-vd_plot, vmax=vd_plot,
                    extent=[0, 1, 0, 1], aspect="auto")
+diff_label = f"{actual_max_diff:.2e}" if actual_max_diff > 0 else "0  (exact)"
 ax_c.set_title(f"(c)  V$_{{tiled}}$[tile (1,1)] − V$_{{uc}}$\n"
-               f"max |diff| = {vd:.1e} K  (exact zero by construction)", fontsize=9)
+               f"max |diff| = {diff_label} K — machine zero by construction", fontsize=9)
 ax_c.set_xlabel("Fractional x"); ax_c.set_ylabel("Fractional y")
 plt.colorbar(im_c, ax=ax_c, label="ΔV (K)", shrink=0.85)
 
@@ -210,10 +212,19 @@ tbl = ax_d.table(cellText=rows[1:], colLabels=rows[0],
 tbl.auto_set_font_size(False)
 tbl.set_fontsize(8.0)
 tbl.scale(1.15, 1.75)
+# Row indices in the table body (1-based: header is row 0)
+# rows[1..6] → table body rows 1..6
+KH_row      = 4   # "K_H" row
+physics_row = 6   # "New physics?" row
 for (r, c), cell in tbl.get_celld().items():
     if r == 0:
         cell.set_facecolor("#2c7bb6")
         cell.set_text_props(color="white", fontweight="bold")
+    elif r == KH_row:
+        cell.set_facecolor("#d4efdf")   # light green — identical K_H
+    elif r == physics_row and c == 2:
+        cell.set_facecolor("#f9d6d2")   # light red — no new physics
+        cell.set_text_props(fontweight="bold")
 ax_d.set_title("(d)  Cost vs. information", fontsize=9, pad=18)
 
 # (e) 1D profile showing tiling
