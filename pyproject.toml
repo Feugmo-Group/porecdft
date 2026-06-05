@@ -62,10 +62,12 @@ Issues = "https://github.com/Feugmo-Group/porecdft/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 exclude = [
-  "applications/",
   "graphify-out/",
   "__pycache__/",
   "*.pyc",
+  "applications/alf_co2/results/",
+  "applications/alf_co2/figures/",
+  "applications/h2_cof/figures/",
 ]
 
 [tool.ruff]

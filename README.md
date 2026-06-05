@@ -98,11 +98,11 @@ from porecdft.io.cif import read_cif
 from porecdft.io.charges import assign_hirshfeld_charges
 
 # read_cif returns a HostAtoms with zero charges
-host = read_cif("ALF.cif")
+host = read_cif("applications/alf_co2/structures/alf.cif")
 
 # Assign DDEC6 partial charges from a CSV (columns: element,charge[,source])
 # charges.dat example:  Al,1.92,DDEC6 / C,0.48,DDEC6 / O,-0.65,DDEC6 / H,0.18,DDEC6
-host = assign_hirshfeld_charges(host, charge_file="charges.dat", source="DDEC6")
+host = assign_hirshfeld_charges(host, charge_file="applications/alf_co2/parameters/charges.csv", source="CP2K_Hirshfeld")
 ```
 
 ### 2. Define the fluid and force field
@@ -120,10 +120,10 @@ fluid = CO2_EPM2    # Fluid instance — no parentheses, it is already instantia
 
 # Host-side UFF/DREIDING LJ parameters (σ in Å, ε/k_B in K)
 host_ff = {
-    "Al": FFEntry("Al", 4.008, 254.3, "UFF"),
-    "C":  FFEntry("C",  3.431, 52.8,  "DREIDING"),
-    "O":  FFEntry("O",  3.118, 30.2,  "DREIDING"),
-    "H":  FFEntry("H",  2.571, 22.1,  "DREIDING"),
+    "Al": FFEntry("Al", 4.008, 254.1, "UFF"),
+    "C":  FFEntry("C",  3.473, 47.86, "DREIDING"),
+    "O":  FFEntry("O",  3.033, 48.16, "DREIDING"),
+    "H":  FFEntry("H",  2.846,  7.649, "DREIDING"),
 }
 
 # Fluid LJ parameters come from the Fluid object (EPM2 values)

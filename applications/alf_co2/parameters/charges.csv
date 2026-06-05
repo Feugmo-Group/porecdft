@@ -1,0 +1,5 @@
+element,charge,source,note
+Al,0.580000,CP2K_Hirshfeld,mean over 8 Al atoms. PBE+D3/TZV2P-MOLOPT-GTH
+O,-0.435000,CP2K_Hirshfeld,mean over 48 formate O atoms
+C,0.222000,CP2K_Hirshfeld,mean over 24 formate C atoms
+H,0.454667,CP2K_Hirshfeld,adjusted from 0.456 to enforce charge neutrality (net was +0.032 e)
