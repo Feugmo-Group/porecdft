@@ -45,13 +45,15 @@ jax = [
   "jax>=0.4",
   "jaxlib>=0.4",
 ]
+all = [
+  "porecdft[jax]",
+]
+
+[dependency-groups]
 dev = [
   "pytest>=7.0",
   "pytest-cov",
   "ruff",
-]
-all = [
-  "porecdft[jax,dev]",
 ]
 
 [project.urls]
