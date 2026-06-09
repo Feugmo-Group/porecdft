@@ -28,9 +28,20 @@ class MorseParam:
 
 @dataclass(frozen=True)
 class MorsePotential(Potential):
+    """Morse between fluid sites and host atoms.
+
+    Parameters
+    ----------
+    include_species : frozenset[str] or None
+        If given, only host atoms of these species are evaluated.
+        Use this to restrict Morse to open metal sites when pairing
+        with an LJPotential that handles the organic backbone:
+        ``LJPotential(..., exclude_species=frozenset({"Zn", "Ni"}))``
+    """
     host_params: dict[str, MorseParam]
     fluid_params: dict[str, MorseParam]
     cutoff: float = 15.0
+    include_species: frozenset | None = None
     name: str = "Morse"
 
     def _pair(self, host_el: str, fluid_label: str) -> tuple[float, float, float]:
@@ -45,9 +56,14 @@ class MorsePotential(Potential):
         r_center = np.asarray(r_center)
         sites_lab = r_center + fluid_sites @ rot.T
         total = 0.0
+        inc = self.include_species
         for s_idx, label in enumerate(fluid_site_labels):
             site_pos = sites_lab[s_idx]
             for h_idx, h_el in enumerate(host.species):
+                if inc is not None and h_el not in inc:
+                    continue
+                if h_el not in self.host_params:
+                    continue
                 dr = host.positions[h_idx] - site_pos
                 r2 = float(dr @ dr)
                 if r2 > self.cutoff * self.cutoff or r2 == 0.0:
