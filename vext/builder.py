@@ -176,8 +176,10 @@ def build_vext_on_grid(
         finite_mask = np.isfinite(all_v)
         shifted = np.where(finite_mask, all_v - np.where(all_inf, 0.0, v_min_grid)[None, :], +1e30)
         boltz = np.exp(-beta * shifted)                  # 0 where rejected
-        n_valid = finite_mask.sum(axis=0).astype(float)
-        mean_boltz = np.where(n_valid > 0, boltz.sum(axis=0) / np.maximum(n_valid, 1.0), 0.0)
+        # Normalise by the TOTAL number of orientations, not just the finite ones.
+        # Rejected orientations have exp(-beta*+inf)=0 and must still be counted
+        # in the denominator so that V_avg = -T ln(<exp(-βV)>_Ω) is correct.
+        mean_boltz = np.where(finite_mask.any(axis=0), boltz.sum(axis=0) / Norient, 0.0)
         with np.errstate(divide="ignore", invalid="ignore"):
             v_avg = np.where(
                 all_inf,

@@ -127,13 +127,21 @@ def main():
                 orientations=rots, spacing=spacing,
                 pbc_supercell=(3, 3, 3), centre_supercell=True,
                 temperature_K=T, cache_path=cache,
-                v_reject_below_K=-3000.0,
+                v_reject_below_K=-10000.0,   # -83 kJ/mol: safe below any physical binding
             )
             vext_avg = np.asarray(data["vext_avg"])
 
         # Clip Vext to physical range
         Vext_K = np.where(np.isfinite(vext_avg), vext_avg, +1e6)
         Vext_K = np.maximum(Vext_K, -4000.0)
+
+        # Henry constant cross-check (Boltzmann integral, no FMT)
+        kB_Pa_A3 = 1.380649e-23 * 1e30
+        beta_T = 1.0 / T
+        boltz_sum = np.exp(np.clip(-beta_T * Vext_K, -700, 0)).sum() * dV
+        K_H_boltz = boltz_sum / (kB_Pa_A3 * T) * 1e5 / 6.022e23 * 1000 / framework_mass_g
+        print(f"  K_H (Boltzmann integral, no FMT): {K_H_boltz:.5f} mmol/g/bar")
+        print(f"  Vext min={Vext_K.min():.0f} K  max(accessible)={Vext_K[Vext_K<1e4].max():.0f} K")
 
         N_abs_arr = np.empty(len(pressures_bar))
         N_exc_arr = np.empty(len(pressures_bar))

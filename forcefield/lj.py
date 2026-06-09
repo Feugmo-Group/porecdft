@@ -33,11 +33,16 @@ class LJPotential(Potential):
         Hard cutoff in Å beyond which the interaction is zero. Default 15 Å.
     mixing : str
         Combining rule. Default "lorentz-berthelot".
+    exclude_species : frozenset[str] or None
+        Host species to skip entirely — useful when a MorsePotential already
+        handles those atoms (e.g. open metal sites in COFs) so that
+        ``CompositePotential([morse, lj])`` does not double-count them.
     """
     host_ff: dict[str, FFEntry]
     fluid_ff: dict[str, FFEntry]
     cutoff: float = 15.0
     mixing: str = "lorentz-berthelot"
+    exclude_species: frozenset | None = None
     name: str = "LJ"
 
     def _pair_params(self, host_el: str, fluid_label: str) -> tuple[float, float]:
@@ -61,11 +66,14 @@ class LJPotential(Potential):
         r_center = np.asarray(r_center)
         sites_lab = r_center + fluid_sites @ rot.T  # (S, 3)
         total = 0.0
+        exc = self.exclude_species or frozenset()
         for s_idx, label in enumerate(fluid_site_labels):
             if label not in self.fluid_ff:
                 continue          # charge-only site (e.g. TraPPE N₂ central 'M')
             site_pos = sites_lab[s_idx]
             for h_idx, h_el in enumerate(host.species):
+                if h_el in exc:
+                    continue
                 dr = host.positions[h_idx] - site_pos
                 # NOTE: caller is responsible for replicating host across PBC if needed.
                 # See `vext/builder.build_vext_on_grid` which handles PBC by supercell.
@@ -85,6 +93,7 @@ class LJPotential(Potential):
         host_elements = host.species
         total = np.zeros(len(grid), dtype=float)
         cutoff2 = self.cutoff * self.cutoff
+        exc = self.exclude_species or frozenset()
         for s_idx, label in enumerate(fluid_site_labels):
             if label not in self.fluid_ff:
                 continue          # charge-only site (e.g. TraPPE N₂ central 'M')
@@ -93,6 +102,8 @@ class LJPotential(Potential):
             r2 = np.einsum("gad,gad->ga", dr, dr)          # (Ng, Na)
             mask = (r2 < cutoff2) & (r2 > 0.0)
             for h_idx, h_el in enumerate(host_elements):
+                if h_el in exc:
+                    continue
                 pair_mask = mask[:, h_idx]
                 if not np.any(pair_mask):
                     continue
