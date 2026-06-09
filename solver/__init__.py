@@ -6,7 +6,9 @@ from porecdft.solver.jax_solver import (
     jax_solve,
     JaxSolverResult,
     grand_potential_jax,
+    GrandPotentialSolver,
     OPTAX_AVAILABLE,
+    EQX_AVAILABLE,
 )
 
 __all__ = [
@@ -17,5 +19,7 @@ __all__ = [
     "jax_solve",
     "JaxSolverResult",
     "grand_potential_jax",
+    "GrandPotentialSolver",
     "OPTAX_AVAILABLE",
+    "EQX_AVAILABLE",
 ]
