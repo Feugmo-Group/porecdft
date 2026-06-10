@@ -23,11 +23,13 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]   # .../porecdft/ git root
-# porecdft is importable via editable install (.pth). Only add parent for `import applications`.
-_CDFT_ROOT = str(_REPO_ROOT.parent)
-if _CDFT_ROOT not in sys.path:
-    sys.path.insert(0, _CDFT_ROOT)
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_PARENT = _REPO_ROOT.parent
+for _p in (str(_REPO_ROOT), str(_PARENT)):
+    try: sys.path.remove(_p)
+    except ValueError: pass
+sys.path.insert(0, str(_PARENT))
+sys.path.insert(0, str(_REPO_ROOT))
 
 warnings.filterwarnings("ignore", message=".*symmetry_equiv_pos_as_xyz.*")
 
