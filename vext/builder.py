@@ -66,8 +66,10 @@ def build_vext_on_grid(
     centre_supercell: bool = True,
     temperature_K: float | None = None,      # for Boltzmann averaging; if None, returns min
     cache_path: str | Path | None = None,
-    v_clip_per_orient_K: float | None = None,        # legacy cap, kept for back-compat
+    v_clip_per_orient_K: float | None = None,          # legacy lower cap, kept for back-compat
     v_reject_below_K: float | None = -10000.0,        # reject (orient, voxel) pairs with V < this
+    v_cap_above_K: float | None = 5000.0,             # cap per-orient V from above before averaging
+    averaging: str = "boltzmann",                      # "boltzmann" (free energy) or "arithmetic" (mean-field)
 ) -> dict:
     """Compute Vext on a 3D grid, averaged or minimised over orientations.
 
@@ -147,6 +149,8 @@ def build_vext_on_grid(
         # but well above the artefactual −10²–10⁴ kJ/mol from contact orientations.
         if v_reject_below_K is not None:
             v_k = np.where(v_k < v_reject_below_K, +np.inf, v_k)
+        if v_cap_above_K is not None:
+            v_k = np.minimum(v_k, v_cap_above_K)
         # Optional legacy cap
         if v_clip_per_orient_K is not None:
             v_k = np.maximum(v_k, v_clip_per_orient_K)
@@ -167,27 +171,38 @@ def build_vext_on_grid(
         "orient_argmin": orient_argmin,
     }
     if temperature_K is not None:
-        beta = 1.0 / temperature_K           # K → 1/K (energy already in K)
-        # If every orientation at a voxel was rejected (set to +inf), the voxel
-        # is inaccessible — record V_avg = +inf and short-circuit the formula.
         v_min_grid = all_v.min(axis=0)
         all_inf = ~np.isfinite(v_min_grid)
-        # Stable Boltzmann average over the FINITE orientations only.
         finite_mask = np.isfinite(all_v)
-        shifted = np.where(finite_mask, all_v - np.where(all_inf, 0.0, v_min_grid)[None, :], +1e30)
-        boltz = np.exp(-beta * shifted)                  # 0 where rejected
-        # Normalise by the TOTAL number of orientations, not just the finite ones.
-        # Rejected orientations have exp(-beta*+inf)=0 and must still be counted
-        # in the denominator so that V_avg = -T ln(<exp(-βV)>_Ω) is correct.
-        mean_boltz = np.where(finite_mask.any(axis=0), boltz.sum(axis=0) / Norient, 0.0)
-        with np.errstate(divide="ignore", invalid="ignore"):
+        n_finite = finite_mask.sum(axis=0).astype(float)
+
+        if averaging == "arithmetic":
+            # Classical mean-field / RPA average: <V>_Ω.
+            # Stable with small N; equivalent to Boltzmann at high T.
+            # Rejected (+inf) orientations are excluded from both sum and count.
+            v_sum = np.where(finite_mask, all_v, 0.0).sum(axis=0)
             v_avg = np.where(
                 all_inf,
                 +np.inf,
-                v_min_grid - temperature_K * np.log(np.maximum(mean_boltz, 1e-300)),
+                np.where(n_finite > 0, v_sum / np.maximum(n_finite, 1.0), +np.inf),
             )
+        else:
+            # Boltzmann-weighted free-energy average: −T ln⟨exp(−βV)⟩_Ω.
+            # Requires many orientations (≥200) to converge for tight binding pockets.
+            beta = 1.0 / temperature_K
+            shifted = np.where(finite_mask, all_v - np.where(all_inf, 0.0, v_min_grid)[None, :], +1e30)
+            boltz = np.exp(-beta * shifted)
+            mean_boltz = np.where(finite_mask.any(axis=0), boltz.sum(axis=0) / Norient, 0.0)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                v_avg = np.where(
+                    all_inf,
+                    +np.inf,
+                    v_min_grid - temperature_K * np.log(np.maximum(mean_boltz, 1e-300)),
+                )
+
         out["vext_avg"] = v_avg.reshape(shape)
         out["temperature_K"] = temperature_K
+        out["averaging"] = averaging
     else:
         out["vext_min"] = orient_min
 

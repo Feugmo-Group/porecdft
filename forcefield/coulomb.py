@@ -35,7 +35,8 @@ when distances are in Å and charges are in units of e.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 from scipy.special import erf, erfc
@@ -65,6 +66,18 @@ class CoulombPotential(Potential):
         Effective Gaussian width σ_ij (Å) when ``method="smeared"``. Default 1.0 Å.
         Pairwise width should account for both atoms; if all atoms are treated as
         identical-width Gaussians of σ_atom, then σ_ij = σ_atom·√2.
+    host_override : HostAtoms, optional
+        If set, use this HostAtoms (e.g. the original 104-atom unit cell) instead of
+        the (possibly replicated) host passed to energy_grid/energy_at. Use together
+        with ``mic_lattice`` to apply the minimum image convention. This is required
+        for charge-neutral frameworks where the unit cell is smaller than the Coulomb
+        cutoff: passing a 3×3×3 supercell without MIC double-counts periodic images,
+        breaking the charge-neutral cancellation ⟨V_Coul⟩_orient ≈ 0.
+    mic_lattice : ndarray (3, 3), optional
+        Lattice matrix (rows = lattice vectors, Å) used to apply the minimum image
+        convention when computing pair distances. When set, each dr vector is wrapped
+        to the nearest periodic image before the cutoff test and energy evaluation.
+        Typically pass ``host.lattice`` (original unit cell).
     """
     fluid_charges: dict[str, float]
     cutoff: float = 15.0
@@ -72,6 +85,8 @@ class CoulombPotential(Potential):
     wolf_alpha: float = 0.0
     gauss_width: float = 1.0
     name: str = "Coulomb"
+    host_override: Any = field(default=None, compare=False, hash=False)
+    mic_lattice: Any = field(default=None, compare=False, hash=False)
 
     def __post_init__(self):
         if self.method not in ("direct", "wolf", "smeared"):
@@ -80,6 +95,18 @@ class CoulombPotential(Potential):
             object.__setattr__(self, "wolf_alpha", 2.7 / self.cutoff)
         if self.method == "smeared" and self.gauss_width <= 0.0:
             raise ValueError("smeared Coulomb requires gauss_width > 0")
+
+    def _mic(self, dr: np.ndarray) -> np.ndarray:
+        """Wrap displacement vectors to the nearest periodic image (MIC).
+
+        dr shape: (..., 3) in Cartesian Å.
+        mic_lattice rows are lattice vectors: mic_lattice[i] = a_i vector.
+        """
+        L = np.asarray(self.mic_lattice)        # (3, 3)
+        invL = np.linalg.inv(L)
+        frac = dr @ invL                        # (..., 3) fractional coords
+        frac = frac - np.round(frac)            # wrap to [-0.5, 0.5)
+        return frac @ L
 
     def _phi(self, r: np.ndarray) -> np.ndarray:
         """Per-pair Coulomb factor in K·Å (multiply by q_i*q_j to get energy in K)."""
@@ -96,42 +123,54 @@ class CoulombPotential(Potential):
         return COULOMB_K_KELVIN_ANGSTROM * erf(r / sigma) / r
 
     def energy_at(self, r_center, rot, host, fluid_sites, fluid_site_labels) -> PotentialEnergy:
+        actual_host = self.host_override if self.host_override is not None else host
         r_center = np.asarray(r_center)
         sites_lab = r_center + fluid_sites @ rot.T
-        host_q = host.charges
-        host_pos = host.positions
+        host_q = actual_host.charges
+        host_pos = actual_host.positions
         total = 0.0
         cutoff2 = self.cutoff * self.cutoff
         for s_idx, label in enumerate(fluid_site_labels):
-            q_s = self.fluid_charges[label]
+            q_s = self.fluid_charges.get(label, 0.0)
             if q_s == 0.0:
                 continue
             dr = host_pos - sites_lab[s_idx]          # (Na, 3)
+            if self.mic_lattice is not None:
+                dr = self._mic(dr)
             r2 = np.einsum("ad,ad->a", dr, dr)
             mask = (r2 < cutoff2) & (r2 > 0.0)
             if not np.any(mask):
                 continue
             r_safe = np.sqrt(r2[mask])
-            phi = self._phi(r_safe)                   # K·Å * 1/Å = K per unit q_i*q_j (dimensionless e²)
+            phi = self._phi(r_safe)
             total += float(q_s * (host_q[mask] * phi).sum())
         return PotentialEnergy(total=total, parts={"Coulomb": total})
 
     def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels):
+        actual_host = self.host_override if self.host_override is not None else host
         grid = np.asarray(grid_xyz)
         sites_lab = grid[:, None, :] + (fluid_sites @ rot.T)[None, :, :]  # (Ng, S, 3)
-        host_pos = host.positions
-        host_q = host.charges
+        host_pos = actual_host.positions
+        host_q = actual_host.charges
         total = np.zeros(len(grid), dtype=float)
         cutoff2 = self.cutoff * self.cutoff
+        use_mic = self.mic_lattice is not None
+        if use_mic:
+            invL = np.linalg.inv(np.asarray(self.mic_lattice))
+            L = np.asarray(self.mic_lattice)
         for s_idx, label in enumerate(fluid_site_labels):
-            q_s = self.fluid_charges[label]
+            q_s = self.fluid_charges.get(label, 0.0)
             if q_s == 0.0:
                 continue
             site = sites_lab[:, s_idx, :]                     # (Ng, 3)
             dr = host_pos[None, :, :] - site[:, None, :]      # (Ng, Na, 3)
+            if use_mic:
+                frac = dr @ invL                               # (Ng, Na, 3)
+                frac = frac - np.round(frac)
+                dr = frac @ L
             r2 = np.einsum("gad,gad->ga", dr, dr)
             mask = (r2 < cutoff2) & (r2 > 0.0)
-            r_safe = np.sqrt(np.where(mask, r2, 1.0))         # avoid div-by-zero outside mask
+            r_safe = np.sqrt(np.where(mask, r2, 1.0))
             phi = np.where(mask, self._phi(r_safe), 0.0)
             total += q_s * (phi * host_q[None, :]).sum(axis=1)
         return total

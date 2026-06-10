@@ -23,9 +23,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parents[3]   # .../porecdft/ git root
+# porecdft is importable via editable install (.pth). Only add parent for `import applications`.
+_CDFT_ROOT = str(_REPO_ROOT.parent)
+if _CDFT_ROOT not in sys.path:
+    sys.path.insert(0, _CDFT_ROOT)
 
 warnings.filterwarnings("ignore", message=".*symmetry_equiv_pos_as_xyz.*")
 
@@ -39,6 +41,7 @@ from porecdft.fluid import EPM2_CO2
 from porecdft.forcefield import (
     CompositePotential, CoulombPotential, LJPotential, QuadrupoleEFGPotential,
 )
+from porecdft.io.forcefield import FFEntry
 from porecdft.functional import (
     make_k_grid, make_fmt_weights_hat,
     compute_weighted_densities, compute_c1, bulk_c1,
@@ -64,7 +67,7 @@ def main():
     host = read_cif(ALF_CIF)
     host_ff = _read_forcefield_csv(FORCEFIELD_CSV)
     charges = read_charges_csv(CHARGES_CSV)
-    host = host.assign_charges(charges, source="Hirshfeld CP2K")
+    host = host.assign_charges(charges, source="GCS2009 REPEAT")
     print(host.summary())
     framework_mass_amu = sum(ATOMIC_MASS[s] for s in host.species)
     framework_mass_g = framework_mass_amu / AVOGADRO
@@ -76,13 +79,30 @@ def main():
     host_super = replace(host_super, positions=host_super.positions + shift)
 
     co2 = EPM2_CO2
-    lj = LJPotential(host_ff=host_ff, fluid_ff=co2.ff, cutoff=15.0)
+    # LJ: single-site at CO2 center of mass (mTraFF σ=3.017 Å, ε=85.671 K).
+    # This matches co2_cdft_final_v2 exactly: LJ uses one spherical site at COM,
+    # so it has no orientation dependence and avoids repulsive O-site contacts.
+    # The EPM2 C-site IS at body position (0,0,0), so mapping "C"→single-site FF
+    # achieves this without any geometry change; the two "O" labels are simply
+    # absent from fluid_ff and silently skipped by LJPotential.energy_grid.
+    # β_sf = 1.41: fitted empirical ε scaling from the original notebook.
+    beta_sf = 1.41
+    _ss_ff = {"C": FFEntry("C", 3.017, 85.671, "mTraFF")}
+    lj = LJPotential(host_ff=host_ff, fluid_ff=_ss_ff, cutoff=15.0,
+                     epsilon_scale=beta_sf)
+    # Direct Coulomb with MIC (minimum image convention) using the original 104-atom
+    # unit cell. Passing the 3×3×3 supercell (2808 atoms) with cutoff=15 Å > a/2=5.68 Å
+    # double-counts periodic images, breaking charge-neutral cancellation and giving
+    # median accessible Vext ~ +33000 K. MIC + original cell gives each physical atom
+    # exactly once at the nearest image, restoring ⟨V_Coul⟩_orient ≈ 0.
     coul = CoulombPotential(fluid_charges=co2.charges, cutoff=15.0,
-                            method="smeared", gauss_width=2.0)
+                            method="direct",
+                            host_override=host,      # original 104-atom unit cell
+                            mic_lattice=host.lattice)
     quad = QuadrupoleEFGPotential(theta_zz=co2.theta_zz, cutoff=15.0)
     vtot = CompositePotential([lj, coul, quad])
 
-    n_orient = 20
+    n_orient = 50                  # 50 orientations matches original notebook
     rots = fibonacci_rotations(n_orient)
     spacing = 0.7
 
@@ -116,18 +136,27 @@ def main():
     for T in temperatures:
         cache = OUT_CACHE / f"vext_avg_T{T:.0f}K.npy"
         print(f"\n=== T = {T:.0f} K ===")
+        vext_avg = None
         if cache.exists():
             data = np.load(cache, allow_pickle=True).item()
             vext_avg = np.asarray(data["vext_avg"])
-            print(f"  Loaded cached Vext (shape {vext_avg.shape})")
-        else:
+            if vext_avg.shape != shape:
+                print(f"  Cache shape {vext_avg.shape} != grid {shape} — discarding stale cache")
+                cache.unlink()
+                data = None
+                vext_avg = None
+            else:
+                print(f"  Loaded cached Vext (shape {vext_avg.shape})")
+        if vext_avg is None:
             print(f"  Building Vext on grid...")
             data = build_vext_on_grid(
                 host, co2, vtot,
                 orientations=rots, spacing=spacing,
                 pbc_supercell=(3, 3, 3), centre_supercell=True,
                 temperature_K=T, cache_path=cache,
-                v_reject_below_K=-10000.0,   # -83 kJ/mol: safe below any physical binding
+                v_reject_below_K=-10000.0,
+                v_cap_above_K=None,          # no upper cap — let +/- contributions cancel
+                averaging="arithmetic",      # stable with O(50) orientations; Boltzmann needs O(500+)
             )
             vext_avg = np.asarray(data["vext_avg"])
 
@@ -138,10 +167,12 @@ def main():
         # Henry constant cross-check (Boltzmann integral, no FMT)
         kB_Pa_A3 = 1.380649e-23 * 1e30
         beta_T = 1.0 / T
-        boltz_sum = np.exp(np.clip(-beta_T * Vext_K, -700, 0)).sum() * dV
+        boltz_sum = np.exp(np.clip(-beta_T * Vext_K, -700, 700)).sum() * dV
         K_H_boltz = boltz_sum / (kB_Pa_A3 * T) * 1e5 / 6.022e23 * 1000 / framework_mass_g
         print(f"  K_H (Boltzmann integral, no FMT): {K_H_boltz:.5f} mmol/g/bar")
-        print(f"  Vext min={Vext_K.min():.0f} K  max(accessible)={Vext_K[Vext_K<1e4].max():.0f} K")
+        accessible_vals = Vext_K[np.isfinite(Vext_K) & (Vext_K < 1e4)]
+        vmax_acc = accessible_vals.max() if accessible_vals.size > 0 else float("nan")
+        print(f"  Vext min={Vext_K.min():.0f} K  max(accessible)={vmax_acc:.0f} K")
 
         N_abs_arr = np.empty(len(pressures_bar))
         N_exc_arr = np.empty(len(pressures_bar))
