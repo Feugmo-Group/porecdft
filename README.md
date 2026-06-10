@@ -126,10 +126,20 @@ uv run python applications/alf_co2/notebooks/phase_summary_figure.py
 ### H₂ / COF figures
 
 ```bash
-# Full COF benchmark: 4 frameworks × 5 metals at 77 K and 298 K.
+# ── Morse potential validation ────────────────────────────────────────────────
+# Runtime: <5 s. No prior results needed.
+uv run python applications/alf_co2/notebooks/phase_morse_validation.py
+# Output: applications/h2_cof/figures/morse_validation.png
+
+# ── Full COF benchmark: 4 frameworks × 5 metals at 77 K and 298 K ────────────
 # Builds Vext caches per framework/metal on first run (~1–2 h total).
 uv run python applications/h2_cof/notebooks/make_h2_cof_benchmark.py
-# Output: figures/ (binding energy heatmap, isotherm comparison, Henry constant table)
+# Output: figures/h2_cof_benchmark.png
+
+# ── COF-333-CoCl2 H₂ isotherm (Henry regime + full-pressure cached data) ─────
+# Runtime: ~1 min. Requires COF-333-CoCl2 CIF.
+uv run python applications/h2_cof/notebooks/make_h2_isotherm.py
+# Output: figures/h2_isotherm_cof333.png
 ```
 
 ---

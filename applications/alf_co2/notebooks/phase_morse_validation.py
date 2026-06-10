@@ -14,11 +14,16 @@ Saves figure to applications/alf_co2/figures/morse_validation.png
 
 import sys
 import os
+from pathlib import Path
 
-# Ensure project root is on the path
-_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if _root not in sys.path:
-    sys.path.insert(0, _root)
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_PARENT = _REPO_ROOT.parent
+for _p in (str(_REPO_ROOT), str(_PARENT)):
+    try: sys.path.remove(_p)
+    except ValueError: pass
+sys.path.insert(0, str(_PARENT))
+sys.path.insert(0, str(_REPO_ROOT))
+_root = str(_REPO_ROOT)
 
 import numpy as np
 import matplotlib
@@ -108,7 +113,8 @@ ax.set_title("Morse vs LJ 12-6 — H₂/graphite benchmark", fontsize=13)
 ax.legend(fontsize=10)
 ax.grid(True, alpha=0.3)
 
-fig_path = os.path.join(_root, "applications", "alf_co2", "figures", "morse_validation.png")
-os.makedirs(os.path.dirname(fig_path), exist_ok=True)
-fig.savefig(fig_path, dpi=150, bbox_inches="tight")
-print(f"\nFigure saved to: {fig_path}")
+for _fig_dir in ["applications/alf_co2/figures", "applications/h2_cof/figures"]:
+    fig_path = os.path.join(_root, _fig_dir, "morse_validation.png")
+    os.makedirs(os.path.dirname(fig_path), exist_ok=True)
+    fig.savefig(fig_path, dpi=150, bbox_inches="tight")
+    print(f"\nFigure saved to: {fig_path}")
