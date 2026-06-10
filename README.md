@@ -127,6 +127,12 @@ uv run python applications/h2_cof/notebooks/make_h2_cof_benchmark.py
 # Runtime: ~1 min. Requires COF-333-CoCl2 CIF.
 uv run python applications/h2_cof/notebooks/make_h2_isotherm.py
 # Output: figures/h2_isotherm_cof333.png
+
+# ── Solver comparison: Picard / Anderson / Adam / FIRE2 ──────────────────────
+# Runs all four porecdft solvers on COF-333-CoCl2 (ideal-gas c1=0) and
+# compares isotherms + convergence curves.  Runtime: ~1 min.
+uv run python applications/h2_cof/notebooks/make_h2_solver_comparison.py
+# Output: figures/h2_solver_comparison.png
 ```
 
 ---
