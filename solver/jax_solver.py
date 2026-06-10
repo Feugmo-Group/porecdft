@@ -107,13 +107,16 @@ def grand_potential_jax(
     """
     rho = jnp.exp(log_rho)
     beta = 1.0 / temperature_K
-    log_rho_bulk = float(jnp.log(rho_bulk + 1e-300))
+    log_rho_bulk = float(np.log(rho_bulk + 1e-300))
 
     if accessibility_mask is not None:
         rho = jnp.where(accessibility_mask, rho, 0.0)
 
-    # Ideal: T ∫ ρ (ψ − log ρ_bulk) dV
-    f_id = temperature_K * jnp.sum(rho * (log_rho - log_rho_bulk)) * dV
+    # Ideal part in kBT units: ∫ ρ (ψ − log ρ_bulk − 1) dV
+    # −1 is essential: d/dρ [ρ(ln ρ − ln ρ_bulk − 1)] = ln ρ − ln ρ_bulk,
+    # which (with β·Vext term) gives EL ρ* = ρ_bulk·exp(−β·V_ext).
+    # No T factor here — all three terms are in units of kBT so gradients balance.
+    f_id = jnp.sum(rho * (log_rho - log_rho_bulk - 1.0)) * dV
     # Excess: ∫ (−c¹(ρ) + c¹_bulk) ρ dV
     c1 = c1_callable(rho)
     f_exc = jnp.sum((-c1 + c1_bulk) * rho) * dV

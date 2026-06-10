@@ -38,6 +38,7 @@ dependencies = [
   "scipy>=1.10",
   "matplotlib>=3.8",
   "pymatgen>=2024.1",
+  "equinox>=0.13.8",
 ]
 
 [project.optional-dependencies]
@@ -45,8 +46,21 @@ jax = [
   "jax>=0.4",
   "jaxlib>=0.4",
 ]
-all = [
+gpu = [
   "porecdft[jax]",
+  "equinox>=0.11",
+  "optax>=0.2",
+  "optimistix>=0.0.10",
+  "warp-lang>=1.4",
+]
+optim = [
+  "porecdft[jax]",
+  "equinox>=0.11",
+  "optax>=0.2",
+  "optimistix>=0.0.10",
+]
+all = [
+  "porecdft[gpu]",
 ]
 
 [dependency-groups]
@@ -63,6 +77,12 @@ Issues = "https://github.com/Feugmo-Group/porecdft/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
+
+[tool.hatch.build.targets.editable]
+# strict mode: installs an import hook that maps `porecdft` → project root,
+# instead of adding the project root itself to sys.path (which would require
+# a porecdft/ subdirectory to exist).
+mode = "strict"
 exclude = [
   "graphify-out/",
   "__pycache__/",
