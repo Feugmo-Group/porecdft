@@ -30,12 +30,16 @@ from scipy.ndimage import minimum_filter
 from scipy.spatial.distance import cdist
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_PARENT = _REPO_ROOT.parent
+for _p in (str(_REPO_ROOT), str(_PARENT)):
+    try: sys.path.remove(_p)
+    except ValueError: pass
+sys.path.insert(0, str(_PARENT))
+sys.path.insert(0, str(_REPO_ROOT))
 
 warnings.filterwarnings("ignore", message=".*symmetry_equiv_pos_as_xyz.*")
 
-from applications.alf_co2 import ALF_CIF, CHARGES_CSV, DATA_DIR, EXP_TARGETS
+from applications.alf_co2 import ALF_CIF_DFT as ALF_CIF, CHARGES_CSV, DATA_DIR, EXP_TARGETS
 from porecdft.diagnostics.isotherm import (
     AVOGADRO,
     IsothermResult,

@@ -16,7 +16,15 @@ Saves:
 """
 
 import sys, os
-sys.path.insert(0, '/Users/cgtetsas/Library/CloudStorage/OneDrive-UniversityofWaterloo/UWaterloo/Manuscript/2026/ALF/cDFT')
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PARENT = _REPO_ROOT.parent
+for _p in (str(_REPO_ROOT), str(_PARENT)):
+    try: sys.path.remove(_p)
+    except ValueError: pass
+sys.path.insert(0, str(_PARENT))
+sys.path.insert(0, str(_REPO_ROOT))
 
 import numpy as np
 import pandas as pd
@@ -25,7 +33,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 # ── paths ──────────────────────────────────────────────────────────────────────
-BASE      = '/Users/cgtetsas/Library/CloudStorage/OneDrive-UniversityofWaterloo/UWaterloo/Manuscript/2026/ALF/cDFT'
+BASE      = str(_REPO_ROOT)
 VEXT_PATH = os.path.join(BASE, 'applications/alf_co2/results/vext_cache/vext_avg_T273K.npy')
 CSV_LJ    = os.path.join(BASE, 'applications/alf_co2/results/phase2_baseline_isotherms.csv')
 CSV_PS    = os.path.join(BASE, 'applications/alf_co2/results/phase3_production_isotherms.csv')

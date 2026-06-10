@@ -66,6 +66,13 @@ Scripts cache intermediate results under `applications/*/results/` (not tracked 
 Run the scripts in the order shown — later scripts depend on CSV files produced by earlier ones.
 
 ```bash
+# ── Figure 00  (Evans 2022 digitised data reference check) ────────────────────
+# Plots the hand-digitised experimental isotherms used as reference throughout.
+# Runtime: <5 s. No prior results needed.
+# Note: figures/00_evans_digitized_check.png is also tracked in git as reference.
+uv run python applications/alf_co2/notebooks/phase0_evans_check.py
+# Output: figures/00_evans_digitized_check.png
+
 # ── Figure 01, 02, 03, 04  (Phase 1 — Vext validation) ───────────────────────
 # Probes the SC and LC binding sites with EPM2 CO₂ over 100 Fibonacci orientations.
 # Runtime: ~5 min. No prior results needed.

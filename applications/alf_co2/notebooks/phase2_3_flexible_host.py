@@ -32,12 +32,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_PARENT = _REPO_ROOT.parent
+for _p in (str(_REPO_ROOT), str(_PARENT)):
+    try: sys.path.remove(_p)
+    except ValueError: pass
+sys.path.insert(0, str(_PARENT))
+sys.path.insert(0, str(_REPO_ROOT))
 
 warnings.filterwarnings("ignore", message=".*symmetry_equiv_pos_as_xyz.*")
 
-from applications.alf_co2 import ALF_CIF, CHARGES_CSV, FORCEFIELD_CSV, DATA_DIR
+from applications.alf_co2 import ALF_CIF, CHARGES_CSV, FORCEFIELD_CSV, DATA_DIR, EXP_TARGETS
 from applications.alf_co2.notebooks.phase1_vext_validation import _read_forcefield_csv
 from porecdft.diagnostics import compute_isotherm_langmuir
 from porecdft.diagnostics.isotherm import K_TO_KJ_PER_MOL, AVOGADRO
@@ -106,13 +110,22 @@ def main():
             host_super = build_supercell(host_st, 3, 3, 3)
             shift = -host_st.lattice[0] - host_st.lattice[1] - host_st.lattice[2]
             host_super = replace(host_super, positions=host_super.positions + shift)
+            # Build grid first so we can validate cache shape
+            grid_xyz, grid_shape_expected, dV_expected = build_grid(host_st, spacing)
             if cache.exists():
                 data = np.load(cache, allow_pickle=True).item()
                 vext_avg = np.asarray(data["vext_avg"])
                 shape = tuple(data["grid_shape"])
                 dV = float(data["dV"])
-                print(f"  {state_name}: cached Vext (shape {shape})")
+                if shape != grid_shape_expected:
+                    print(f"  {state_name}: cache shape {shape} != expected {grid_shape_expected} — rebuilding")
+                    cache.unlink()
+                    vext_avg = None
+                else:
+                    print(f"  {state_name}: cached Vext (shape {shape})")
             else:
+                vext_avg = None
+            if vext_avg is None:
                 print(f"  {state_name}: building Vext...")
                 t0 = time.time()
                 data = build_vext_on_grid(
@@ -127,8 +140,9 @@ def main():
                 dV = float(data["dV"])
                 print(f"    done in {time.time() - t0:.1f}s, "
                       f"Vmin={float(np.nanmin(vext_avg)) * K_TO_KJ_PER_MOL:+.2f} kJ/mol")
+            else:
+                shape = grid_shape_expected
             # Accessibility mask
-            grid_xyz, _, _ = build_grid(host_st, spacing)
             grid_3d = grid_xyz.reshape(*shape, 3)
             nn_dist = np.full(shape, np.inf)
             for h in host_super.positions:

@@ -30,7 +30,10 @@ import matplotlib.gridspec as gridspec
 from pymatgen.core import Structure
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT))
+_PARENT = ROOT.parent
+for _p in [str(_PARENT), str(ROOT)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from porecdft.structure.host import HostAtoms
 from porecdft.structure.supercell import build_supercell
