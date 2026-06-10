@@ -121,8 +121,33 @@ class WertheimAssociation:
         rho_grid: np.ndarray,     # (*shape) molecules/Å³
         grid_xyz: np.ndarray,     # (*shape, 3) Å
         dV_A3: float,
+        use_warp: bool = False,
     ) -> np.ndarray:
-        """Mean fluid density inside each site's association sphere. Shape (M,)."""
+        """Mean fluid density inside each site's association sphere. Shape (M,).
+
+        Parameters
+        ----------
+        use_warp : bool
+            If True and warp-lang is installed, dispatch to the GPU kernel via
+            ``porecdft.warp_backend.rho_bar_sphere_warp``.  Falls back to the
+            NumPy path automatically when Warp is unavailable.
+        """
+        if use_warp:
+            try:
+                from porecdft.warp_backend import rho_bar_sphere_warp, WARP_AVAILABLE
+                if WARP_AVAILABLE:
+                    site_pos   = np.array([s.position  for s in self.sites], dtype=np.float32)
+                    site_r2    = np.array([s.radius_A**2 for s in self.sites], dtype=np.float32)
+                    site_kappa = np.array([s.kappa_A3  for s in self.sites], dtype=np.float32)
+                    return np.asarray(rho_bar_sphere_warp(
+                        grid_xyz.reshape(-1, 3).astype(np.float32),
+                        rho_grid.ravel().astype(np.float32),
+                        site_pos, site_r2, site_kappa, float(dV_A3),
+                    ), dtype=float)
+            except Exception:
+                pass  # fall through to NumPy path
+
+        # NumPy reference path
         flat_rho = rho_grid.ravel()
         flat_xyz = grid_xyz.reshape(-1, 3)
         rho_bar = np.empty(len(self.sites))
@@ -134,7 +159,6 @@ class WertheimAssociation:
             if n_inside == 0:
                 rho_bar[i] = 0.0
             else:
-                # Normalise by κ_s (association volume) — see site-balance eq.
                 # ρ̄_s * κ_s = Σ_{r∈Ω_s} ρ(r) dV  (no /κ_s)
                 rho_bar[i] = float(flat_rho[inside].sum() * dV_A3) / s.kappa_A3
         return rho_bar
@@ -145,9 +169,10 @@ class WertheimAssociation:
         grid_xyz: np.ndarray,
         dV_A3: float,
         T_K: float,
+        use_warp: bool = False,
     ) -> np.ndarray:
         """X_s = 1/(1 + ρ̄_s · κ_s · Δ_s(T)) for each site.  Shape (M,)."""
-        rho_bar = self._rho_bar_all(rho_grid, grid_xyz, dV_A3)
+        rho_bar = self._rho_bar_all(rho_grid, grid_xyz, dV_A3, use_warp=use_warp)
         X = np.empty(len(self.sites))
         for i, s in enumerate(self.sites):
             delta = s.delta_factor(T_K)
@@ -167,9 +192,10 @@ class WertheimAssociation:
         grid_xyz: np.ndarray,
         dV_A3: float,
         T_K: float,
+        use_warp: bool = False,
     ) -> float:
         """N_assoc = Σ_s (1 − X_s) — extra molecules per unit cell from H-bonds."""
-        X = self.fraction_unbound(rho_grid, grid_xyz, dV_A3, T_K)
+        X = self.fraction_unbound(rho_grid, grid_xyz, dV_A3, T_K, use_warp=use_warp)
         return float(np.sum(1.0 - X))
 
     # --------------------------------------------------------------------------
@@ -182,6 +208,7 @@ class WertheimAssociation:
         grid_xyz: np.ndarray,
         dV_A3: float,
         T_K: float,
+        use_warp: bool = False,
     ) -> np.ndarray:
         """Δc¹_assoc(r) — correction to the one-body DCF.  Same shape as rho_grid.
 
@@ -192,7 +219,7 @@ class WertheimAssociation:
         The bulk reference is zero (no association sites in bulk).
         """
         flat_xyz = grid_xyz.reshape(-1, 3)
-        rho_bar = self._rho_bar_all(rho_grid, grid_xyz, dV_A3)
+        rho_bar = self._rho_bar_all(rho_grid, grid_xyz, dV_A3, use_warp=use_warp)
         c1_flat = np.zeros(len(flat_xyz))
         for i, s in enumerate(self.sites):
             delta = s.delta_factor(T_K)
