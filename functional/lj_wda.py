@@ -23,7 +23,8 @@ and the bulk reference:
 
     c¹_att_bulk = −β · μ_att(ρ_bulk)
 
-Reference: Elvis do A. Soares, `cdft/dft.py`, 2024 (WDA branch).
+Reference: Denton & Ashcroft, *Phys. Rev. A* 39 (1989) 4701 (WDA); Johnson,
+Zollweg & Gubbins, *Mol. Phys.* 78 (1993) 591 (MBWR EOS).
 """
 from __future__ import annotations
 
