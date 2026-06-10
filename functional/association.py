@@ -220,3 +220,7 @@ class WertheimAssociation:
         """
         c1 = self.c1_correction(rho_grid, grid_xyz, dV_A3, T_K)
         return vext_grid - T_K * c1
+
+
+# Alias for compatibility with revision scripts
+WertheimiAssociation = WertheimAssociation

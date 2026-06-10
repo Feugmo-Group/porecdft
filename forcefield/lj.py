@@ -43,6 +43,7 @@ class LJPotential(Potential):
     cutoff: float = 15.0
     mixing: str = "lorentz-berthelot"
     exclude_species: frozenset | None = None
+    epsilon_scale: float = 1.0   # multiply every ε_ij by this factor (e.g. 1.41 from original fit)
     name: str = "LJ"
 
     def _pair_params(self, host_el: str, fluid_label: str) -> tuple[float, float]:
@@ -60,7 +61,7 @@ class LJPotential(Potential):
             )
         else:
             raise ValueError(f"Unknown mixing rule: {self.mixing}")
-        return sigma, epsilon
+        return sigma, epsilon * self.epsilon_scale
 
     def energy_at(self, r_center, rot, host, fluid_sites, fluid_site_labels) -> PotentialEnergy:
         r_center = np.asarray(r_center)
