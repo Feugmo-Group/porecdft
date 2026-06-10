@@ -1,7 +1,6 @@
 """FMT (Fundamental Measure Theory) weight functions and φ functions.
 
-Migrated from the legacy `cdft/_aux.py` (Elvis do A. Soares 2022-2024). Five
-functionals are supported via the ``model`` argument:
+Five functionals are supported via the ``model`` argument:
 
 - ``"RF"``   — Rosenfeld 1989 (original FMT)
 - ``"WBI"``  — White Bear I (Roth, Mecke, Oettel 2002)
