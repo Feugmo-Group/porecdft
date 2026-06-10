@@ -326,5 +326,79 @@ def main():
               f"Flex+W {comb_v:.2f} ({(comb_v-evans_1bar)/evans_1bar*100:+.0f}%)")
 
 
+def generate_figure_35():
+    """Figure 35 — final 3-panel summary vs Evans 2022.
+
+    LW+Elastic (K_eff=0.7 GPa, ε_assoc=400 K) + FMT-aWBII vs experiment.
+    """
+    import csv as _csv
+
+    lw_csv  = RES_DIR / "phase3_production_isotherms.csv"
+    fmt_csv = RES_DIR / "phase2_2_fmt_isotherms.csv"
+    _MMHg   = 0.00133322
+
+    from applications.alf_co2 import EXP_ISOTHERMS
+
+    def _load_lw(T_K):
+        rows = []
+        with open(lw_csv) as f:
+            for row in _csv.DictReader(f):
+                if (abs(float(row["K_eff_GPa"]) - 0.7) < 1e-9
+                        and abs(float(row["eps_assoc_K"]) - 400.0) < 1e-9
+                        and abs(float(row["T_K"]) - T_K) < 1e-9):
+                    rows.append((float(row["p_bar"]), float(row["N_mmol_g"])))
+        rows.sort()
+        return np.array([r[0] for r in rows]), np.array([r[1] for r in rows])
+
+    def _load_fmt(T_K):
+        rows = []
+        with open(fmt_csv) as f:
+            for row in _csv.DictReader(f):
+                if abs(float(row["T_K"]) - T_K) < 1e-9:
+                    rows.append((float(row["p_bar"]), float(row["mmol_per_g_abs"])))
+        rows.sort()
+        return np.array([r[0] for r in rows]), np.array([r[1] for r in rows])
+
+    temps = [273, 298, 323]
+    exp_colors = {273: "navy", 298: "teal", 323: "darkorange"}
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=False)
+
+    for ax, T in zip(axes, temps):
+        exp = EXP_ISOTHERMS.get(T)
+        if exp:
+            p_mmhg = np.array(exp["p_bar"]) / _MMHg
+            ax.scatter(p_mmhg, exp["N_mmol_g"],
+                       color=exp_colors[T], s=40, zorder=5, label="Evans 2022")
+
+        p_lw, n_lw = _load_lw(float(T))
+        ax.plot(p_lw / _MMHg, n_lw, "r-", linewidth=2.0, label="LW+Elastic (best)")
+
+        if T in (298, 323):
+            p_fmt, n_fmt = _load_fmt(float(T))
+            ax.plot(p_fmt / _MMHg, n_fmt, "--", color="mediumpurple",
+                    linewidth=1.8, label="FMT-aWBII")
+
+        ax.set_xlim(0, 900)
+        ax.set_ylim(0, 5)
+        ax.set_xlabel("Pressure (mmHg)", fontsize=12)
+        ax.set_ylabel("CO$_2$ adsorbed (mmol g$^{-1}$)", fontsize=12)
+        ax.set_title(f"T = {T} K", fontsize=13)
+        ax.legend(fontsize=9, loc="lower right")
+        ax.grid(alpha=0.25)
+
+    fig.suptitle(
+        "CO$_2$/ALF cDFT vs Evans 2022 (re-digitized experimental data)\n"
+        "LW+Elastic: K=0.7 GPa, $\\varepsilon_\\mathrm{assoc}$=400 K"
+        "  |  FMT: aWBII hard-sphere",
+        fontsize=11, y=1.02,
+    )
+    fig.tight_layout()
+    out = OUT_FIG / "35_co2_vs_experiment_final.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved {out}")
+
+
 if __name__ == "__main__":
-    main()
+    generate_figure_35()

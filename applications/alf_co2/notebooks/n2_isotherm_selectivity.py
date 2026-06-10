@@ -337,11 +337,13 @@ def main():
     vext_n2, shape, dV = get_n2_vext(host, n2, vtot)
 
     # ── Accessibility mask ────────────────────────────────────────────────────
-    # N₂ kinetic diameter 3.64 Å > CO₂ 3.3 Å → probe 2.3 Å excludes the narrow
-    # SC-SC channel windows (~4.1 Å), reproducing the kinetic size-exclusion
-    # mechanism described in Evans 2022 (CO₂ enters SC, N₂ does not).
-    print("\n[3] Accessibility mask (N₂ probe = 2.3 Å, kinetic exclusion)...")
-    access = build_access_mask(host, shape, probe_radius=2.3)
+    # N₂ figure is the *thermodynamic upper bound* — no kinetic barriers applied.
+    # Hard-core overlap is already encoded as inf in the vext cache (v_reject_below_K).
+    # Using probe_radius=2.3 would impose a geometric kinetic barrier and give
+    # near-zero loading, contradicting the "thermodynamic equilibrium" interpretation.
+    print("\n[3] Accessibility mask (N₂ thermodynamic: all finite voxels)...")
+    access = np.isfinite(vext_n2)
+    print(f"  Access (finite voxels): {access.sum()}/{access.size} voxels ({100*access.mean():.1f}%)")
 
     # ── Accessible-voxel Vext stats ───────────────────────────────────────────
     v_acc = vext_n2[access & np.isfinite(vext_n2)]

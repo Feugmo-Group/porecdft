@@ -24,7 +24,7 @@ CHARGES_CSV = PARAMETERS_DIR / "charges.csv"
 
 # Evans et al. DFT binding energies (kJ/mol) — Table 1 of Evans 2022 Sci. Adv. ade1473.
 # Negative = attractive. SC = small cavity (H-bond), LC = large cavity (no H-bond).
-DFT_BINDING_KJ_PER_MOL = {"SC": -48.4, "LC": -36.2}
+DFT_BINDING_KJ_PER_MOL = {"SC": -18.4, "LC": -8.1}
 
 # Experimental CO₂/ALF isotherms — Evans 2022 Sci. Adv. ade1473, Fig. 2A
 # Carefully re-digitized from the published figure.
