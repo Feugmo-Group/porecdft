@@ -1,3 +1,0 @@
-site,LJ only,LJ (Al ε=0),Coul direct,Coul Wolf,LJ + Coul (direct),LJ + Coul (Wolf),LJ + Quad,LJ + Coul + Quad (W),DFT_ref
-SC,2.971,13.808,253.566,-108.963,288.270,-84.897,-155.819,-263.484,-18.4
-LC,-30.765,-19.702,-24.496,-26.128,-29.151,-41.729,-44.395,-67.104,-8.1

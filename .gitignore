@@ -30,3 +30,9 @@ venv/
 # IDE
 .vscode/
 .idea/
+
+# Generated outputs — recomputed by running the phase scripts
+applications/alf_co2/results/
+applications/alf_co2/figures/
+applications/h2_cof/results/
+applications/h2_cof/figures/

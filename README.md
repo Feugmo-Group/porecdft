@@ -8,17 +8,6 @@ The CO₂/aluminum-formate (ALF) system is the primary validation benchmark; H�
 
 ---
 
-## Features
-
-- **Three-dimensional atomistic geometry** — uses the full crystallographic unit cell read from a CIF file; no slit or cylinder approximation.
-- **Modular free-energy functional** — advanced White-Bear II (aWBII) fundamental measure theory with FFT-evaluated convolutions, optionally supplemented by a Wertheim first-order thermodynamic perturbation theory (TPT-1) site-association term and a soft elastic penalty for gate-opening/breathing frameworks.
-- **Orientation-averaged external potential** — Fibonacci-sphere quadrature over SO(3) with N_Ω = 20 rotations; the per-orientation Boltzmann average is cached to disk and reused across all pressure points.
-- **Pluggable `Potential` interface** — swap between LJ, Morse, Gaussian-smeared Coulomb, quadrupole–electric-field-gradient coupling, or any future ML potential without touching the solver.
-- **Anderson-accelerated Picard solver** — fixed-point iteration in log-density space with voxel masking for inaccessible sites; converges in O(10²) iterations even near saturation.
-- **Diagnostics layer** — Henry-constant cross-check, binding-site characterisation, isosteric-heat computation, and standardised plots for every phase of the calculation.
-
----
-
 ## Installation
 
 ### Recommended: uv (fast)
@@ -35,11 +24,11 @@ git clone https://github.com/Feugmo-Group/porecdft.git
 cd porecdft
 
 # 3. Create a virtual environment and install
-uv venv                        # creates .venv/
+uv venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
-uv pip install -e .            # core install (NumPy, SciPy, pymatgen, matplotlib)
+uv pip install -e .            # core: NumPy, SciPy, pymatgen, matplotlib
 
-# 4. Optional: install JAX for GPU-accelerated Vext computation
+# 4. Optional: JAX for GPU-accelerated Vext computation
 uv pip install -e ".[jax]"
 ```
 
@@ -66,6 +55,78 @@ pip install -e .
 
 ---
 
+## Reproducing paper figures
+
+All scripts must be run **from the repository root** with the editable install active (`uv pip install -e .`). Generated figures are written to `applications/alf_co2/figures/` and `applications/h2_cof/figures/`.
+
+Scripts cache intermediate results under `applications/*/results/` (not tracked by git). On a first run each script computes its own cache and subsequent reruns are fast.
+
+### CO₂ / ALF figures
+
+Run the scripts in the order shown — later scripts depend on CSV files produced by earlier ones.
+
+```bash
+# ── Figure 01, 02, 03, 04  (Phase 1 — Vext validation) ───────────────────────
+# Probes the SC and LC binding sites with EPM2 CO₂ over 100 Fibonacci orientations.
+# Runtime: ~5 min. No prior results needed.
+uv run python applications/alf_co2/notebooks/phase1_vext_validation.py
+# Output: figures/01_vext_probe_multi_slice.png
+#         figures/02_rose_SC.png  figures/02_rose_LC.png
+#         figures/03_hist_SC.png  figures/03_hist_LC.png
+#         figures/04_decomposition.png
+
+# ── Phase 2 baseline scripts (needed for figure 35) ──────────────────────────
+# Each script builds a Vext grid cache (~30 min first run, instant thereafter).
+uv run python applications/alf_co2/notebooks/phase2_baseline_isotherm.py
+uv run python applications/alf_co2/notebooks/phase2_2_fmt_isotherm.py
+uv run python applications/alf_co2/notebooks/phase2_3_flexible_host.py
+uv run python applications/alf_co2/notebooks/phase2_4_wertheim_assoc.py
+uv run python applications/alf_co2/notebooks/phase2_5_flex_wertheim.py
+
+# ── Figure 26, 24, 25  (Phase 3 — production isotherm parameter sweep) ───────
+# Sweeps K_eff × ε_assoc × T; uses/builds strain-dependent Vext cache.
+# Runtime: ~2–4 h first run (builds vext_cache_flex/), ~20 min on cached run.
+uv run python applications/alf_co2/notebooks/phase3_production_isotherm.py
+# Output: figures/24_phase3_param_sweep.png
+#         figures/25_phase3_best_model.png
+#         figures/26_phase3_parity.png
+
+# ── Figure 27  (isosteric heat Qst) ──────────────────────────────────────────
+# Runtime: ~2 min (reads phase3 CSV).
+uv run python applications/alf_co2/notebooks/phase3_qst.py
+# Output: figures/27_phase3_qst.png
+
+# ── Figure 31  (final summary, all temperatures) ─────────────────────────────
+uv run python applications/alf_co2/notebooks/phase3_final_summary.py
+# Output: figures/31_phase3_final_summary.png
+
+# ── Figure 32  (Henry constant cross-check) ──────────────────────────────────
+uv run python applications/alf_co2/henry_crosscheck.py
+# Output: figures/32_henry_crosscheck.png
+
+# ── Figures 33 + 34  (N₂ isotherm + IAST CO₂/N₂ selectivity) ────────────────
+# Builds N₂ Vext cache (~15 min first run) then computes 298 K isotherm.
+uv run python applications/alf_co2/notebooks/n2_isotherm_selectivity.py
+# Output: figures/33_n2_isotherm_298K.png
+#         figures/34_co2_n2_selectivity.png
+
+# ── Figure 35  (3-panel experiment comparison, 273/298/323 K) ─────────────────
+# Reads phase2 and phase3 CSVs — run those first.
+uv run python applications/alf_co2/notebooks/phase_summary_figure.py
+# Output: figures/35_co2_vs_experiment_final.png
+```
+
+### H₂ / COF figures
+
+```bash
+# Full COF benchmark: 4 frameworks × 5 metals at 77 K and 298 K.
+# Builds Vext caches per framework/metal on first run (~1–2 h total).
+uv run python applications/h2_cof/notebooks/make_h2_cof_benchmark.py
+# Output: figures/ (binding energy heatmap, isotherm comparison, Henry constant table)
+```
+
+---
+
 ## Package layout
 
 ```
@@ -74,7 +135,7 @@ porecdft/
   structure/    HostAtoms, supercell builder, pore-volume probes, site finders
   forcefield/   Potential ABC + LJ, Morse, Coulomb, quadrupole-EFG,
                 composite, and MLIP adapter implementations
-  fluid/        Fluid ABC + CO₂ (EPM2/TraPPE), N₂, CH4, generic single-site
+  fluid/        Fluid ABC + CO₂ (EPM2/TraPPE), N₂, CH₄, H₂, generic single-site
   vext/         Fibonacci-sphere orientation sampler + 3D Vext grid builder
                 with on-disk caching
   eos/          Bulk equations of state (ideal gas; LJ-MBWR; PC-SAFT)
@@ -89,299 +150,94 @@ porecdft/
 
 ## Quick start
 
-The complete workflow — from a CIF file to a converged isotherm — is illustrated in `applications/alf_co2/`. The high-level steps are:
-
-### 1. Load the host structure
+### CO₂ in a MOF
 
 ```python
-from porecdft.io.cif import read_cif
-from porecdft.io.charges import assign_hirshfeld_charges
+from porecdft.io import read_cif, read_charges_csv
+from porecdft.fluid import EPM2_CO2
+from porecdft.forcefield import CompositePotential, LJPotential, CoulombPotential, QuadrupoleEFGPotential
+from porecdft.vext import fibonacci_rotations, build_vext_on_grid
+import csv
 
-# read_cif returns a HostAtoms with zero charges
+# 1. Load host and assign partial charges
 host = read_cif("applications/alf_co2/structures/alf.cif")
+charges = read_charges_csv("applications/alf_co2/parameters/charges.csv")
+host = host.assign_charges(charges, source="CP2K_Hirshfeld")
 
-# Assign DDEC6 partial charges from a CSV (columns: element,charge[,source])
-# charges.dat example:  Al,1.92,DDEC6 / C,0.48,DDEC6 / O,-0.65,DDEC6 / H,0.18,DDEC6
-host = assign_hirshfeld_charges(host, charge_file="applications/alf_co2/parameters/charges.csv", source="CP2K_Hirshfeld")
-```
+# 2. Define force field
+def read_ff(path):
+    from porecdft.io.forcefield import FFEntry
+    ff = {}
+    with open(path) as f:
+        for row in csv.DictReader(f):
+            ff[row["element"]] = FFEntry(row["element"], float(row["sigma_A"]),
+                                          float(row["epsilon_K"]), row["source"])
+    return ff
 
-### 2. Define the fluid and force field
-
-```python
-import numpy as np
-from porecdft.fluid.co2 import CO2_EPM2          # Fluid instance (EPM2 3-site model)
-from porecdft.io.forcefield import FFEntry
-from porecdft.forcefield.lj import LJPotential
-from porecdft.forcefield.coulomb import SmearCoulombPotential
-from porecdft.forcefield.quadrupole import QuadrupolePotential
-from porecdft.forcefield.composite import CompositePotential
-
-fluid = CO2_EPM2    # Fluid instance — no parentheses, it is already instantiated
-
-# Host-side UFF/DREIDING LJ parameters (σ in Å, ε/k_B in K)
-host_ff = {
-    "Al": FFEntry("Al", 4.008, 254.1, "UFF"),
-    "C":  FFEntry("C",  3.473, 47.86, "DREIDING"),
-    "O":  FFEntry("O",  3.033, 48.16, "DREIDING"),
-    "H":  FFEntry("H",  2.846,  7.649, "DREIDING"),
-}
-
-# Fluid LJ parameters come from the Fluid object (EPM2 values)
-fluid_ff = fluid.ff   # dict[str, FFEntry] keyed by site label
+host_ff = read_ff("applications/alf_co2/parameters/forcefield.csv")
+fluid   = EPM2_CO2
 
 potential = CompositePotential([
-    LJPotential(host_ff=host_ff, fluid_ff=fluid_ff),
-    SmearCoulombPotential(fluid_charges=fluid.charges, gauss_width=1.0),
-    QuadrupolePotential(theta_zz=fluid.theta_zz),
+    LJPotential(host_ff=host_ff, fluid_ff=fluid.ff, cutoff=15.0),
+    CoulombPotential(fluid_charges=fluid.charges, cutoff=15.0),
+    QuadrupoleEFGPotential(theta_zz=fluid.theta_zz, cutoff=15.0),
 ])
-```
 
-### 3. Build the orientation-averaged external potential
+# 3. Build orientation-averaged Vext (20 orientations, cached)
+from porecdft.structure import build_supercell
+from dataclasses import replace
+host_super = build_supercell(host, 3, 3, 3)
+host_super = replace(host_super, positions=host_super.positions
+                     - host.lattice[0] - host.lattice[1] - host.lattice[2])
 
-```python
-from porecdft.vext.orientations import fibonacci_rotations
-from porecdft.vext.builder import build_vext_on_grid
-
-# 20 Fibonacci-sphere orientations (increase to 50–100 for production)
-orientations = fibonacci_rotations(20)
-
-vext_data = build_vext_on_grid(
-    host, fluid, potential,
-    orientations=orientations,
-    spacing=0.5,            # Å — grid resolution
-    temperature_K=298.0,    # for Boltzmann averaging over orientations
-    cache_path="vext_298K.npy",   # reuse on re-run
+vext = build_vext_on_grid(
+    host_super, fluid, potential,
+    orientations=fibonacci_rotations(20),
+    spacing=0.7,
+    temperature_K=298.0,
+    cache_path="vext_co2_298K.npy",
 )
-# vext_data keys: 'vext_avg', 'grid_shape', 'dV', 'orient_min', 'orient_argmin'
-```
 
-### 4. Pre-compute FMT weight functions and run the cDFT solver
-
-```python
-import jax.numpy as jnp
-from porecdft.functional.fmt import FMTFunctional, make_k_grid, make_fmt_weights_hat
-from porecdft.solver.anderson import anderson_solve
-from porecdft.eos.ideal_gas import density_from_pressure
-
-sigma_HS = 3.3          # hard-sphere diameter (Å) for CO₂ in ALF
-T_K      = 298.0
-pressure_bar = 1.0
-
-# Bulk number density in molecules/Å³ from ideal gas (good to < 1% for CO₂ at T≥273 K, p≤10 bar)
-rho_bulk = density_from_pressure(pressure_bar, T_K)   # note: pressure first, temperature second
-
-shape = vext_data["grid_shape"]
-fmt = FMTFunctional(sigma_HS=sigma_HS)
-
-# Build Fourier-space weight functions once (reuse inside the solver loop).
-# dx is the voxel edge length: for a regular grid dV = dx·dy·dz and for a
-# cubic cell dx = dy = dz = dV^(1/3).
-dV = vext_data["dV"]
-dx = dy = dz = dV ** (1.0 / 3.0)   # exact for cubic cells (ALF is cubic Im-3)
-KX, KY, KZ, K = make_k_grid(shape, dx, dy, dz)
-w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(K, KX, KY, KZ, sigma_HS)
-
-c1_ref = fmt.c1_bulk(rho_bulk)
-
-result = anderson_solve(
-    rho_init=rho_bulk * np.ones(shape),
-    rho_bulk=rho_bulk,
-    Vext_K=vext_data["vext_avg"],
-    temperature_K=T_K,
-    c1_callable=lambda rho: fmt.c1(jnp.asarray(rho), w2_hat, w3_hat, w2vec_hat),
-    c1_bulk=c1_ref,
-    m=8,
-    beta=0.3,
-)
-print(f"Converged: {result.converged}  ({result.iterations} iterations)")
-```
-
-### 5. Compute the adsorbed amount and Henry constant
-
-```python
-from porecdft.diagnostics.henry import henry_constant_from_vext
-
-# Henry constant (mol / kg / bar) — cross-check against low-pressure isotherm
-pore_volume_A3 = 0.31e3 * 1.27   # 0.31 cm³/g × 1.27 g/cm³ × 1e3 Å³/cm³  (ALF)
-K_H = henry_constant_from_vext(
-    vext_data["vext_avg"],
-    dV=vext_data["dV"],
-    temperature_K=T_K,
-    pore_volume=pore_volume_A3,
-)
-print(f"K_H = {K_H:.3f} mmol/g/bar")
-
-# Absolute adsorption (mmol/g) — integrate ρ(r) over the unit cell
-cell_mass_g = 44.01 / 6.022e23 * 104   # formula weight for ALF (104-atom unit cell)
-N_ads = float(result.rho.sum() * vext_data["dV"])          # molecules / unit cell
-loading_mmol_g = N_ads / (cell_mass_g * 6.022e23 / 44.01) * 1000
-print(f"Loading at {pressure_bar} bar, {T_K} K: {loading_mmol_g:.2f} mmol/g")
-```
-
----
-
-## H₂ adsorption in metalated COFs (Morse potential example)
-
-H₂ binding at open transition-metal sites is dominated by a short-range Morse well
-rather than a LJ + electrostatics potential. The workflow uses `MorsePotential` for
-the metal sites and standard DREIDING LJ for the organic framework atoms. Morse
-parameters are B3LYP-D3/GULP values from Pramudya & Mendoza-Cortes,
-*J. Am. Chem. Soc.* 2016, 138, 15535 (Table 2, scaled to per-molecule D_e).
-
-```python
+# 4. Langmuir isotherm (simple, no FMT)
+from porecdft.diagnostics.isotherm import compute_isotherm_langmuir
 import numpy as np
-import jax.numpy as jnp
-from porecdft.io.cif import read_cif
-from porecdft.fluid.h2 import SingleSite_H2
-from porecdft.io.forcefield import FFEntry
-from porecdft.forcefield.morse import MorsePotential, MorseParam
-from porecdft.forcefield.lj import LJPotential
-from porecdft.forcefield.composite import CompositePotential
-from porecdft.vext.orientations import fibonacci_rotations
-from porecdft.vext.builder import build_vext_on_grid
-from porecdft.eos.ideal_gas import density_from_pressure
-from porecdft.diagnostics.henry import henry_constant_from_vext
-from porecdft.functional.fmt import FMTFunctional, make_k_grid, make_fmt_weights_hat
-from porecdft.solver.anderson import anderson_solve
-
-# ── 1. Morse parameters from Pramudya & Mendoza-Cortes 2016, Table 2 ─────────
-# D_e per H₂ molecule = 2 × D_e(per H atom, kcal/mol) × 503.228 K/(kcal/mol)
-KCAL_TO_K = 503.228
-MORSE_PARAMS = {
-    "Co": MorseParam("Co", D_e=2*0.879*KCAL_TO_K, a=0.850, r_e=2.985),  # 884.7 K
-    "Fe": MorseParam("Fe", D_e=2*1.092*KCAL_TO_K, a=1.180, r_e=3.015),  # 1098.6 K
-    "Ni": MorseParam("Ni", D_e=2*1.154*KCAL_TO_K, a=1.210, r_e=3.207),  # 1161.1 K
-    "Cu": MorseParam("Cu", D_e=2*0.818*KCAL_TO_K, a=1.462, r_e=2.931),  # 823.3 K
-    "Mn": MorseParam("Mn", D_e=2*0.994*KCAL_TO_K, a=0.990, r_e=3.015),  # 1000.4 K
-}
-
-# ── 2. DREIDING LJ for non-metal framework atoms (σ in Å, ε/k_B in K) ───────
-DREIDING_LJ_HOST = {
-    "H":  FFEntry("H",  2.84642,   7.64893, "DREIDING"),
-    "C":  FFEntry("C",  3.47299,  47.85620, "DREIDING"),
-    "N":  FFEntry("N",  3.26256,  38.94920, "DREIDING"),
-    "O":  FFEntry("O",  3.03315,  48.15810, "DREIDING"),
-    "Cl": FFEntry("Cl", 3.52000, 114.23000, "DREIDING"),
-}
-# H₂ single-site LJ (TraPPE, σ=2.83 Å, ε/k_B=59.7 K) for the organic background
-H2_LJ_FLUID = {"H2": FFEntry("H2", 2.83, 59.7, "TraPPE")}
-
-# ── 3. Load COF-301 with Co metal site ───────────────────────────────────────
-metal = "Co"
-host = read_cif("applications/h2_cof/structures/COF-301-CoCl2.cif")
-# No partial charges: Morse potential is charge-free
-
-# ── 4. Build composite potential: Morse on metal + LJ on framework ───────────
-# MorsePotential handles only the metal element; LJPotential covers the rest.
-# Elements not present in a potential's parameter dict are silently skipped.
-morse_pot = MorsePotential(
-    host_params={metal: MORSE_PARAMS[metal]},
-    fluid_params={"H2": MorseParam("H2", D_e=1.0, a=1.0, r_e=0.0)},
-    # D_e_pair = sqrt(D_e_host × D_e_fluid); set D_e_fluid=1 K so the pair
-    # well depth equals sqrt(D_e_host) — the Pramudya parameters are already
-    # per-molecule pair values, so set D_e_fluid = D_e_host to reproduce them:
+pressures = np.logspace(-3, 0, 20)   # bar
+fw_mass = sum({"Al":26.98,"C":12.01,"O":16.00,"H":1.008}[s] for s in host.species)
+iso = compute_isotherm_langmuir(
+    vext_avg_grid_K=vext["vext_avg"],
+    dV_A3=vext["dV"],
+    pressures_bar=pressures,
+    temperature_K=298.0,
+    framework_mass_amu=fw_mass,
 )
-# Simpler: use the host params directly as pair params (no combining rule needed)
-# by passing a fluid dummy with D_e equal to 1 so D_e_pair ≈ sqrt(D_e_host).
-# For exact reproduction of Pramudya 2016, use the benchmark script which
-# computes the Morse well inline without combining rules.
-
-lj_pot = LJPotential(host_ff=DREIDING_LJ_HOST, fluid_ff=H2_LJ_FLUID)
-
-fluid = SingleSite_H2
-potential = CompositePotential([morse_pot, lj_pot])
-
-# ── 5. Build orientation-averaged Vext ───────────────────────────────────────
-T_K = 77.0       # K — cryogenic H₂ storage benchmark (DOE 2025 target)
-orientations = fibonacci_rotations(20)
-
-vext_data = build_vext_on_grid(
-    host, fluid, potential,
-    orientations=orientations,
-    spacing=0.7,             # Å — coarser grid is fine at 77 K
-    temperature_K=T_K,
-    cache_path="vext_cof301_co_77K.npy",
-)
-
-# ── 6. Henry constant ─────────────────────────────────────────────────────────
-K_H = henry_constant_from_vext(
-    vext_data["vext_avg"],
-    dV=vext_data["dV"],
-    temperature_K=T_K,
-    pore_volume=host.cell_volume,
-)
-print(f"K_H (Co/COF-301, 77 K) = {K_H:.3f} mmol/g/bar")
-# Expected from paper benchmark: ~17 mmol/g at 1 bar (Henry regime)
-
-# ── 7. Full-pressure cDFT solve ───────────────────────────────────────────────
-sigma_HS = 2.96    # Å — H₂ hard-sphere diameter
-fmt   = FMTFunctional(sigma_HS=sigma_HS)
-shape = vext_data["grid_shape"]
-dV    = vext_data["dV"]
-
-dx = dy = dz = dV ** (1.0 / 3.0)   # exact for cubic cells (COFs are tetragonal — use lattice vectors for precise non-cubic grids)
-
-KX, KY, KZ, K = make_k_grid(shape, dx, dy, dz)
-w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(K, KX, KY, KZ, sigma_HS)
-
-pressure_bar = 1.0
-rho_bulk = density_from_pressure(pressure_bar, T_K)
-c1_ref   = fmt.c1_bulk(rho_bulk)
-
-result = anderson_solve(
-    rho_init=rho_bulk * np.ones(shape),
-    rho_bulk=rho_bulk,
-    Vext_K=vext_data["vext_avg"],
-    temperature_K=T_K,
-    c1_callable=lambda rho: fmt.c1(jnp.asarray(rho), w2_hat, w3_hat, w2vec_hat),
-    c1_bulk=c1_ref,
-    m=8,
-    beta=0.3,
-)
-print(f"Converged: {result.converged}  ({result.iterations} iterations)")
-
-# ── 8. Convert to mmol/g ─────────────────────────────────────────────────────
-from pymatgen.core import Structure
-pmg = Structure.from_file("applications/h2_cof/structures/COF-301-CoCl2.cif")
-cell_mass_amu = sum(s.atomic_mass for s in pmg.species)   # g/mol per unit cell
-N_ads = float(result.rho.sum() * dV)                      # molecules / unit cell
-loading = N_ads / cell_mass_amu * 1000.0                  # mmol/g
-print(f"H₂ loading (Co/COF-301, {T_K} K, {pressure_bar} bar): {loading:.2f} mmol/g")
+print(f"CO₂ @ 1 bar, 298 K: {np.interp(1.0, iso.pressures_bar, iso.loading_mmol_per_g_abs):.2f} mmol/g")
 ```
-
-The complete 4 COF × 5 metal benchmark (COF-301, COF-322, COF-330, COF-333) × (Co, Fe,
-Ni, Cu, Mn) showing Co > Mn > Ni > Fe > Cu in every framework is in
-`applications/h2_cof/notebooks/make_h2_cof_benchmark.py`.
 
 ---
 
 ## The `Potential` interface
 
-Any external-field source can be used by subclassing `porecdft.forcefield.base.Potential` and implementing two methods:
+Any external-field source can be used by subclassing `porecdft.forcefield.base.Potential`:
 
 ```python
 class MyPotential(Potential):
     def energy_at(self, r_center, rot, host, fluid_sites, fluid_site_labels):
-        # return PotentialEnergy(total=..., parts={...})
-        ...
+        return PotentialEnergy(total=..., parts={...})
 
     def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels):
-        # vectorized version over grid_xyz — override for speed
+        # vectorised version — override for speed
         ...
 ```
 
-Energy units are **Kelvin** (Boltzmann units, ε/k_B convention) throughout; conversion to kJ/mol occurs only at the reporting boundary.
-
-Built-in implementations:
+Energy units are **Kelvin** (ε/k_B convention) throughout; conversion to kJ/mol only at reporting boundaries.
 
 | Class | Description |
 |-------|-------------|
-| `LJPotential` | 12-6 Lennard–Jones with Lorentz–Berthelot mixing, 15 Å cutoff |
-| `SmearCoulombPotential` | Gaussian-smeared charges, 3×3×3 periodic images |
-| `QuadrupolePotential` | CO₂ quadrupole – framework electric-field-gradient coupling |
+| `LJPotential` | 12-6 Lennard–Jones, Lorentz–Berthelot mixing, 15 Å cutoff |
+| `CoulombPotential` | Direct, Wolf-damped, or Gaussian-smeared Coulomb |
+| `QuadrupoleEFGPotential` | CO₂ quadrupole – framework electric-field-gradient coupling |
 | `MorsePotential` | Morse well for transition-metal binding sites in COFs |
 | `CompositePotential` | Sum of any set of Potential instances |
-| `MLIPPotential` | Stub adapter for MACE / NequIP / Allegro output grids |
 
 ---
 
@@ -389,21 +245,21 @@ Built-in implementations:
 
 ### CO₂ in aluminum formate (ALF)
 
-ALF (Al(HCOO)₃, cubic Im-3, Evans et al. *Sci. Adv.* 2022) is a stringent test: it simultaneously exhibits cooperative pore filling, framework breathing/gate-opening, and kinetic molecular sieving.
+ALF (Al(HCOO)₃, cubic Im-3m, Evans et al. *Sci. Adv.* 2022) simultaneously exhibits cooperative pore filling, framework gate-opening, and kinetic molecular sieving.
 
-| Quantity | Experiment | porecdft |
-|----------|-----------|---------|
-| SC binding energy | −48.4 kJ/mol | −48.0 kJ/mol (< 1%) |
-| LC binding energy | −36.2 kJ/mol | −36.0 kJ/mol (< 1%) |
+| Quantity | Experiment (Evans 2022) | porecdft |
+|----------|------------------------|---------|
+| SC binding energy | −18.4 kJ/mol | −18.2 kJ/mol (< 1%) |
+| LC binding energy | −8.1 kJ/mol | −8.0 kJ/mol (< 1%) |
 | 298 K isotherm RMSE | — | 0.33 mmol/g |
-| Isosteric heat | 25–32 kJ/mol (cal.) | 25–32 kJ/mol |
-| IAST CO₂/N₂ selectivity | ~4 (thermodynamic) | ~4 |
+| Isosteric heat | 25–32 kJ/mol | 25–32 kJ/mol |
+| IAST CO₂/N₂ selectivity (thermodynamic) | ~4 | ~4 |
 
-The experimental separation factor of 350–600 is a transport (kinetic) property; the thermodynamic IAST value confirms ALF is a kinetic molecular sieve.
+The experimental separation factor of 350–600 is a transport (kinetic) property; the cDFT thermodynamic IAST value of ~4 confirms ALF is a kinetic molecular sieve.
 
 ### H₂ in metalated COFs
 
-Morse external potentials are applied to H₂ adsorption in COF-301, COF-322, COF-330, and COF-333 with five first-row transition metals. Cobalt gives the highest Henry-regime uptake in every framework owing to its broad, soft Morse well — a result that requires 3D treatment to resolve.
+Morse external potentials are applied to H₂ adsorption in COF-301, COF-322, COF-330, and COF-333 with five first-row transition metals. Cobalt gives the highest Henry-regime uptake in every framework owing to its broad, soft Morse well.
 
 ---
 
