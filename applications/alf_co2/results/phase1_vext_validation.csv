@@ -1,3 +1,0 @@
-site,x_A,y_A,z_A,E_min_kJ_per_mol,E_mean_kJ_per_mol,E_max_kJ_per_mol,E_boltz298_kJ_per_mol,DFT_ref_kJ_per_mol,delta_kJ_per_mol,LJ_kJ_per_mol,Coulomb_kJ_per_mol,Quad_kJ_per_mol
-SC,-0.000,5.487,0.000,192.689,571.673,966.047,203.775,-18.400,+211.089,2.971,311.862,-122.144
-LC,5.095,5.095,5.487,-22.943,228.859,414.483,-11.527,-8.100,-14.843,-4.655,-24.496,6.208
