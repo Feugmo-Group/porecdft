@@ -200,20 +200,8 @@ for cif_stem, cof_label, base_metal in COF_LIST:
         print(f"    {metal}: N(1 bar) = {N:.3f} mmol/g  K_H = {kH:.2e}")
 
 # ══════════════════════════════════════════════════════════════════════════
-# 3. Isotherm data: reference notebook + live cDFT cache
+# 3. Isotherm data: live cDFT cache only
 # ══════════════════════════════════════════════════════════════════════════
-NOTEBOOK_DATA = np.array([
-    [  1,   2.02,  0.37, 0.08], [  5,   9.45,  1.71, 0.38],
-    [ 10,  17.56,  3.13, 0.70], [ 20,  31.07,  5.36, 1.24],
-    [ 40,  51.85,  8.42, 2.04], [ 60,  67.93, 10.46, 2.66],
-    [ 80,  81.19, 11.88, 3.16], [100,  92.51, 12.90, 3.59],
-    [120, 102.40, 13.63, 3.96], [150, 115.23, 14.32, 4.43],
-    [200, 132.80, 14.76, 5.07], [250, 147.11, 14.65, 5.59],
-    [300, 159.13, 14.21, 6.02], [400, 178.54, 12.80, 6.70],
-    [500, 193.83, 11.08, 7.24],
-])
-
-# Load live cDFT isotherm if available
 _iso_cache = ROOT / "applications/h2_cof/results/isotherm_h2_cof333_298K.npz"
 CDFT_DATA = None
 if _iso_cache.exists():
@@ -284,23 +272,14 @@ for i, (cif_stem, cof_label, _) in enumerate(COF_LIST):
                     ha="center", va="bottom", fontsize=6, rotation=90)
 
 # ── (c) Full-pressure COF-333-CoCl2 at 298 K ─────────────────────────────
-P_ref = NOTEBOOK_DATA[:, 0]
-wt_ref = NOTEBOOK_DATA[:, 3]
-ex_ref = NOTEBOOK_DATA[:, 2]
-
-# Reference (notebook)
-l1, = ax_iso.plot(P_ref, wt_ref, "o--", color="#d6604d", lw=1.5, ms=5,
-                  alpha=0.55, label="Reference (notebook)")
-
-# Live cDFT result
-legend_lines = [l1]
+legend_lines = []
 if CDFT_DATA is not None:
     wt_cdft = CDFT_DATA["wt_pct"]
     ex_cdft = CDFT_DATA["extra_gL"]
     P_cdft  = CDFT_DATA["P"]
     l_cdft, = ax_iso.plot(P_cdft, wt_cdft, "o-", color="#d6604d", lw=2.0, ms=5,
-                          label="porecdft aWBII+WDA (new)")
-    legend_lines.insert(0, l_cdft)
+                          label="Gravimetric uptake (wt%)")
+    legend_lines.append(l_cdft)
 
 ax_iso.axhline(5.5, color="black", lw=1.0, ls=":", alpha=0.55)
 ax_iso.text(460, 5.70, "DOE 2025\n(5.5 wt%)", fontsize=8, color="black",
@@ -314,18 +293,13 @@ ax_iso.tick_params(axis="y", colors="#d6604d", labelsize=10)
 ax_iso.spines["top"].set_visible(False)
 
 ax2 = ax_iso.twinx()
-ax2.plot(P_ref, ex_ref, "s--", color="#8c564b", lw=1.2, ms=4, alpha=0.45)
 if CDFT_DATA is not None:
-    l2, = ax2.plot(P_cdft, ex_cdft, "s-", color="#8c564b", lw=1.5, ms=4, alpha=0.85,
+    l2, = ax2.plot(P_cdft, ex_cdft, "s--", color="#8c564b", lw=1.5, ms=4, alpha=0.85,
                    label=r"Excess (g L$^{-1}$)")
     legend_lines.append(l2)
-else:
-    l2, = ax2.plot(P_ref, ex_ref, "s-", color="#8c564b", lw=1.5, ms=4, alpha=0.85,
-                   label=r"Excess (g L$^{-1}$)")
-    legend_lines.append(l2)
+    ax2.set_ylim(0, ex_cdft.max() * 1.18)
 ax2.set_ylabel(r"Excess H$_2$ uptake (g L$^{-1}$)", fontsize=11, color="#8c564b")
 ax2.tick_params(axis="y", colors="#8c564b", labelsize=10)
-ax2.set_ylim(0, ex_ref.max() * 1.18)
 ax2.spines["top"].set_visible(False)
 ax_iso.legend(legend_lines, [l.get_label() for l in legend_lines],
               loc="lower right", fontsize=8, framealpha=0.85)
