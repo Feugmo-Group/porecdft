@@ -27,8 +27,9 @@ uv sync --extra gpu
 
 ```bash
 pip install -e .           # minimal (CPU)
-pip install -e ".[dev]"    # + pytest, ruff, black
-pip install -e ".[gpu]"    # + CUDA JAX + NVIDIA Warp (GPU machine)
+pip install -e ".[dev]"    # + pytest, ruff
+pip install -e ".[jax]"    # + JAX + equinox (CPU JAX)
+pip install -e ".[gpu]"    # + CUDA JAX + equinox + optax + NVIDIA Warp (GPU machine)
 pip install -e ".[warp]"   # + Warp only (manage JAX separately)
 ```
 
@@ -39,21 +40,23 @@ The `jax` conda environment contains all dependencies:
 ```bash
 conda activate jax
 pip install -e ".[dev]"
+uv sync --group dev   # alternative: uv manages the dev group
 pytest -m "not slow"
 ```
 
 ### Requirements
 
-| Package      | Minimum | Tested  |
-|--------------|---------|---------|
-| Python       | 3.10    | 3.12    |
-| NumPy        | 2.0     | 2.3     |
-| SciPy        | 1.10    | 1.15    |
-| pymatgen     | 2024.1  | 2025.6  |
-| matplotlib   | 3.8     | 3.10    |
-| equinox      | 0.13    | 0.13    |
-| JAX *(opt)*  | 0.4     | 0.6     |
-| warp-lang *(opt)* | 1.4 | 1.4   |
+| Package             | Minimum | Tested  |
+|---------------------|---------|---------|
+| Python              | 3.10    | 3.12    |
+| NumPy               | 2.0     | 2.3     |
+| SciPy               | 1.10    | 1.15    |
+| pymatgen            | 2024.1  | 2025.6  |
+| matplotlib          | 3.8     | 3.10    |
+| JAX *(opt: `jax`)*  | 0.4     | 0.6     |
+| equinox *(opt: `jax`)* | 0.13 | 0.13   |
+| optax *(opt: `gpu`)*| 0.2     | 0.2     |
+| warp-lang *(opt: `gpu`, `warp`)* | 1.4 | 1.4 |
 
 > **Note:** CIF files are read with `pymatgen.io.cif`. The `ase` package is **not** required.
 
