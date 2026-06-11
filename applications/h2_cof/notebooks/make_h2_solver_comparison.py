@@ -409,28 +409,46 @@ def main():
     print(f"\nFigure saved: {out_iso}")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # FIGURE 2 — Convergence / loss curves
+    # FIGURE 2 — Convergence / loss curves + time comparison bar chart
     # ══════════════════════════════════════════════════════════════════════════
-    n_panels = len(conv)
-    fig, axes = plt.subplots(1, n_panels, figsize=(4.5 * n_panels, 4.2),
-                             sharey=False)
-    if n_panels == 1:
-        axes = [axes]
+    n_loss   = len(conv)
+    n_cols   = n_loss + 1          # loss panels + 1 time bar chart
+    fig, axes = plt.subplots(1, n_cols,
+                             figsize=(4.2 * n_loss + 3.6, 4.2),
+                             gridspec_kw={"width_ratios": [1]*n_loss + [0.75]})
 
-    for ax, (name, info) in zip(axes, conv.items()):
-        hist = info["history"]
-        xs   = np.arange(1, len(hist) + 1)
+    # — loss panels —
+    for ax, (name, info) in zip(axes[:n_loss], conv.items()):
+        hist  = info["history"]
+        xs    = np.arange(1, len(hist) + 1)
         color = COLORS.get(name, "gray")
         ax.semilogy(xs, hist, color=color, lw=2)
         status = "converged" if info["converged"] else "NOT converged"
         ax.set_title(
-            f"{name}\n{info['iters']} iters  {info['time_s']:.2f}s  [{status}]",
+            f"{name}\n{info['iters']} iters  {info['time_s']:.2f} s  [{status}]",
             fontsize=10)
         ax.set_xlabel("Iteration / step", fontsize=11)
         ax.set_ylabel(info["ylabel"], fontsize=11)
         ax.grid(alpha=0.25, which="both")
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
+
+    # — time bar chart —
+    ax_t   = axes[-1]
+    names  = list(conv.keys())
+    times  = [conv[n]["time_s"] for n in names]
+    colors = [COLORS.get(n, "gray") for n in names]
+    bars   = ax_t.barh(names, times, color=colors, height=0.55, edgecolor="white")
+    for bar, t in zip(bars, times):
+        ax_t.text(t + max(times)*0.02, bar.get_y() + bar.get_height()/2,
+                  f"{t:.2f}s", va="center", ha="left", fontsize=9)
+    ax_t.set_xlabel("Wall-clock time (s)", fontsize=11)
+    ax_t.set_title("Time to convergence\n(P=10 bar, T=298 K)", fontsize=10)
+    ax_t.set_xlim(0, max(times) * 1.25)
+    ax_t.invert_yaxis()
+    ax_t.spines["top"].set_visible(False)
+    ax_t.spines["right"].set_visible(False)
+    ax_t.grid(axis="x", alpha=0.25)
 
     fig.suptitle(
         f"Solver convergence — COF-333-CoCl₂  H₂  T=298 K  P={P_CONV:.0f} bar\n"
