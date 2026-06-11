@@ -20,7 +20,9 @@ Output:
 """
 from __future__ import annotations
 
+import csv
 import sys
+import time
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -44,8 +46,13 @@ warnings.filterwarnings("ignore", message=".*symmetry_equiv_pos_as_xyz.*")
 
 from applications.alf_co2 import ALF_CIF_DFT as ALF_CIF, CHARGES_CSV, DATA_DIR, EXP_TARGETS
 from porecdft.diagnostics.isotherm import AVOGADRO, density_from_pressure
+from porecdft.functional import (
+    make_k_grid, make_fmt_weights_hat,
+    compute_weighted_densities, compute_c1, bulk_c1,
+)
 from porecdft.functional.association import WertheimiAssociation
 from porecdft.io import read_cif, read_charges_csv
+from porecdft.solver import picard_solve, anderson_solve
 from porecdft.structure import build_supercell
 from porecdft.vext import build_grid
 
@@ -53,6 +60,12 @@ OUT_FIG   = DATA_DIR / "figures"
 RES_DIR   = DATA_DIR / "results"
 CACHE     = RES_DIR / "vext_cache_flex"
 OUT_CSV   = RES_DIR / "phase3_production_isotherms.csv"
+FMT_CSV   = RES_DIR / "phase2_2_fmt_isotherms.csv"
+
+# Hard-sphere diameter for FMT (single-site CO₂ equivalent)
+SIGMA_HS = 3.017
+# Pressure axis for FMT baseline (20 log-spaced points, matching original phase2_2)
+FMT_PRESSURES = np.logspace(-3, 0, 20)
 
 ATOMIC_MASS = {"Al": 26.9815, "C": 12.011, "O": 15.999, "H": 1.008, "N": 14.007}
 TEMPERATURES = [273.0, 298.0, 323.0]
@@ -362,6 +375,108 @@ def main():
     fig.savefig(OUT_FIG / "26_phase3_parity.png", dpi=180)
     plt.close(fig)
     print(f"Figure: {OUT_FIG}/26_phase3_parity.png")
+
+    # ── FMT-aWBII baseline (written to phase2_2_fmt_isotherms.csv) ──────────
+    # Uses the strain=0 Vext from vext_cache_flex/ and the same grid as above.
+    print("\n=== FMT-aWBII baseline ===")
+    lat = host0.lattice
+    dx  = float(np.linalg.norm(lat[0])) / shp0[0]
+    dy  = float(np.linalg.norm(lat[1])) / shp0[1]
+    dz  = float(np.linalg.norm(lat[2])) / shp0[2]
+    KX, KY, KZ, K_grid = make_k_grid(shp0, dx, dy, dz)
+    w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(
+        K_grid, KX, KY, KZ, SIGMA_HS, dx=dx, dy=dy, dz=dz
+    )
+    print(f"FMT grid {shp0}, dx={dx:.3f} dy={dy:.3f} dz={dz:.3f} Å, σ_HS={SIGMA_HS} Å")
+
+    rho_max_hs = 0.45 * 6.0 / (np.pi * SIGMA_HS ** 3)
+
+    def c1_callable_fmt(rho_arr):
+        wd = compute_weighted_densities(rho_arr, w2_hat, w3_hat, w2vec_hat, SIGMA_HS)
+        return np.asarray(compute_c1(rho_arr, wd, w2_hat, w3_hat, w2vec_hat,
+                                     SIGMA_HS, model="aWBII"))
+
+    fmt_isotherms = {}
+    for T in TEMPERATURES:
+        vext_strain0 = np.asarray(np.load(
+            CACHE / f"vext_avg_strain0.000_T{T:.0f}K.npy", allow_pickle=True
+        ).item()["vext_avg"])
+        Vext_K = np.where(np.isfinite(vext_strain0), vext_strain0, +1e6)
+        Vext_K = np.maximum(Vext_K, -4000.0)
+        beta = 1.0 / T
+
+        N_abs_arr  = np.empty(len(FMT_PRESSURES))
+        N_exc_arr  = np.empty(len(FMT_PRESSURES))
+        iter_arr   = np.empty(len(FMT_PRESSURES), dtype=int)
+        conv_arr   = np.empty(len(FMT_PRESSURES), dtype=bool)
+
+        rho = None
+        t0  = time.time()
+        for i, p in enumerate(FMT_PRESSURES):
+            rho_bulk = density_from_pressure(p, T)
+            c1_b     = bulk_c1(rho_bulk, SIGMA_HS, model="aWBII")
+            rho_init = (rho if rho is not None
+                        else np.minimum(
+                            rho_bulk * np.exp(np.clip(-beta * Vext_K, -50.0, 20.0)) * acc0,
+                            rho_max_hs))
+            if rho is not None and (not np.isfinite(rho).all()
+                                    or rho.sum() * dV0 * to_mmol > 50.0):
+                rho_init = np.minimum(
+                    rho_bulk * np.exp(np.clip(-beta * Vext_K, -50.0, 20.0)) * acc0,
+                    rho_max_hs)
+
+            res = anderson_solve(
+                rho_init=rho_init, rho_bulk=rho_bulk,
+                Vext_K=Vext_K, temperature_K=T,
+                c1_callable=c1_callable_fmt, c1_bulk=c1_b,
+                m=6, beta=0.3, max_iter=800, tol=1e-4,
+                accessibility_mask=acc0, log_clip=25.0,
+                safeguard_alpha=0.02, picard_warmup=30, step_clip=2.0,
+            )
+            last_err = res.error_history[-1] if res.error_history else np.inf
+            if not res.converged and (not np.isfinite(last_err) or last_err > 0.1):
+                rho_fallback = (res.rho if np.isfinite(last_err)
+                                else np.minimum(
+                                    rho_bulk * np.exp(np.clip(-beta * Vext_K, -50.0, 20.0)) * acc0,
+                                    rho_max_hs))
+                res = picard_solve(
+                    rho_init=rho_fallback,
+                    rho_bulk=rho_bulk, Vext_K=Vext_K, temperature_K=T,
+                    c1_callable=c1_callable_fmt, c1_bulk=c1_b,
+                    alpha=0.005, max_iter=2000, tol=1e-3,
+                    accessibility_mask=acc0, log_clip=25.0,
+                )
+                last_err = res.error_history[-1] if res.error_history else np.inf
+
+            rho = res.rho if (np.isfinite(last_err) and last_err < 0.5) else None
+            N_abs_arr[i]  = float(res.rho.sum() * dV0)
+            N_exc_arr[i]  = float((res.rho - rho_bulk * acc0).sum() * dV0)
+            iter_arr[i]   = res.iterations
+            conv_arr[i]   = res.converged
+
+        elapsed = time.time() - t0
+        fmt_isotherms[T] = {
+            "N_abs": N_abs_arr, "N_exc": N_exc_arr,
+            "mmol_per_g_abs": N_abs_arr * to_mmol,
+            "mmol_per_g_exc": N_exc_arr * to_mmol,
+            "iters": iter_arr, "converged": conv_arr,
+        }
+        print(f"  T={T:.0f} K  {elapsed:.1f}s  "
+              f"conv={conv_arr.sum()}/{len(conv_arr)}  "
+              f"N@1bar={float(np.interp(1.0, FMT_PRESSURES, N_abs_arr * to_mmol)):.3f} mmol/g")
+
+    with FMT_CSV.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["T_K", "p_bar", "N_per_cell_abs", "N_per_cell_exc",
+                    "mmol_per_g_abs", "mmol_per_g_exc", "picard_iters", "converged"])
+        for T, iso in fmt_isotherms.items():
+            for i, p in enumerate(FMT_PRESSURES):
+                w.writerow([T, f"{p:.5e}",
+                            f"{iso['N_abs'][i]:.5e}", f"{iso['N_exc'][i]:.5e}",
+                            f"{iso['mmol_per_g_abs'][i]:.5f}",
+                            f"{iso['mmol_per_g_exc'][i]:.5f}",
+                            iso["iters"][i], iso["converged"][i]])
+    print(f"FMT CSV: {FMT_CSV}")
 
 
 if __name__ == "__main__":
