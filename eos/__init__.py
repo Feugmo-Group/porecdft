@@ -27,6 +27,7 @@ from porecdft.eos.ideal_gas import (
 )
 from porecdft.eos.lj_mbwr import LJEOS, bh_diameter
 from porecdft.eos.peng_robinson import PengRobinsonEOS, H2_PR, N2_PR, CH4_PR
+from porecdft.eos.span_wagner_co2 import SpanWagnerCO2EOS, CO2_SW
 
 __all__ = [
     # base + utilities
@@ -53,4 +54,7 @@ __all__ = [
     "H2_PR",
     "N2_PR",
     "CH4_PR",
+    # Span-Wagner CO2
+    "SpanWagnerCO2EOS",
+    "CO2_SW",
 ]
