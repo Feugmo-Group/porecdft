@@ -78,27 +78,24 @@ uv run python applications/alf_co2/notebooks/phase1e_smeared_coulomb_tuning.py  
 #### Paper figures — minimal pipeline
 
 Run the scripts in the order shown. Each step depends on CSV files produced by earlier ones.
-Vext caches under `results/vext_cache*/` are built on first run (~30 min–4 h) and reused thereafter.
+Vext caches under `results/vext_cache_flex/` are built on first run (~2–4 h) and reused thereafter.
 
 ```bash
-# Step 1 — FMT-aWBII self-consistent isotherm (provides FMT reference curve)
-# Runtime: ~1 h first run. Writes: results/phase2_2_fmt_isotherms.csv
-uv run python applications/alf_co2/notebooks/phase2_2_fmt_isotherm.py
-# Output: figures/15_phase2_2_fmt_isotherms.png
-
-# Step 2 — Production isotherm: K_eff × ε_assoc × T parameter sweep
-# Runtime: ~2–4 h first run (builds vext_cache_flex/). Writes: results/phase3_production_isotherms.csv
+# Step 1 — Production isotherm: K_eff × ε_assoc × T sweep + FMT-aWBII baseline
+# Runtime: ~2–4 h first run (builds vext_cache_flex/).
+# Writes: results/phase3_production_isotherms.csv
+#         results/phase2_2_fmt_isotherms.csv  (FMT baseline, used by summary figures)
 uv run python applications/alf_co2/notebooks/phase3_production_isotherm.py
 # Output: figures/24_phase3_param_sweep.png
 #         figures/25_phase3_best_model.png
 #         figures/26_phase3_parity.png
 
-# Step 3 — Isosteric heat Q_st (Clausius–Clapeyron from step 2 CSV)
+# Step 2 — Isosteric heat Q_st (Clausius–Clapeyron from step 1 CSV)
 # Runtime: ~2 min. Writes: results/phase3_qst.csv
 uv run python applications/alf_co2/notebooks/phase3_qst.py
 # Output: figures/27_phase3_qst.png
 
-# Step 4 — Paper summary figures (read steps 1–3 CSVs; no new cDFT runs)
+# Step 3 — Paper summary figures (read steps 1–2 CSVs; no new cDFT runs)
 uv run python applications/alf_co2/notebooks/phase3_final_summary.py
 # Output: figures/31_phase3_final_summary.png
 
