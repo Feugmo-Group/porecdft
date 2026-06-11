@@ -154,22 +154,15 @@ ax_anom.annotate("Pm-3̄m\n(open)", xy=(310, 0.5), fontsize=9, color='gray', ha=
 ax_anom.annotate("gate-\nopening\n↑", xy=(283, 2.0), fontsize=9, color='gray', ha='center', va='bottom')
 
 # ── Panel D: Q_st ─────────────────────────────────────────────────────────────
-if QST_CSV.exists():
-    qst_data = _load_csv(QST_CSV)
-    if "N_mmol_g" in qst_data and "Qst_kJmol" in qst_data:
-        n_q = qst_data["N_mmol_g"]
-        q_q = qst_data["Qst_kJmol"]
-        ax_qst.plot(n_q, q_q, 'g-', lw=2.5, label="cDFT Q_st (Clausius-Clapeyron)", zorder=4)
-    else:
-        # Use hardcoded values from the agent
-        n_q = np.array([0.5, 1.0, 2.0, 3.0])
-        q_q = np.array([32.28, 29.09, 27.06, 25.80])
-        ax_qst.plot(n_q, q_q, 'go-', lw=2.5, ms=9, label="cDFT Q_st (K=0.7 GPa, ε=400 K)", zorder=4)
-else:
-    # Use hardcoded values from the agent output
-    n_q = np.array([0.5, 1.0, 2.0, 3.0])
-    q_q = np.array([32.28, 29.09, 27.06, 25.80])
-    ax_qst.plot(n_q, q_q, 'go-', lw=2.5, ms=9, label="cDFT Q_st (K=0.7 GPa, ε=400 K)", zorder=4)
+if not QST_CSV.exists():
+    raise FileNotFoundError(
+        f"Q_st CSV not found: {QST_CSV}\n"
+        "Run phase3_qst.py first to generate it."
+    )
+qst_data = _load_csv(QST_CSV)
+n_q = qst_data["N_mmol_g"]
+q_q = qst_data["Qst_kJmol"]
+ax_qst.plot(n_q, q_q, 'g-', lw=2.5, label="cDFT Q_st (Clausius-Clapeyron)", zorder=4)
 
 ax_qst.axhspan(25, 35, alpha=0.15, color='red', label="Evans calorimetry band (25–35 kJ/mol)")
 ax_qst.set_xlabel("CO₂ loading (mmol/g)", fontsize=11)

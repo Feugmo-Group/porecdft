@@ -176,6 +176,16 @@ def main() -> None:
     qst_avg = np.nanmean(np.stack(qst_estimates, axis=0), axis=0)  # kJ/mol
 
     # ------------------------------------------------------------------ #
+    # Save Q_st CSV (required by phase3_final_summary.py)               #
+    # ------------------------------------------------------------------ #
+    qst_csv_path = RES_DIR / "phase3_qst.csv"
+    with open(qst_csv_path, "w") as _f:
+        _f.write("N_mmol_g,Qst_kJmol\n")
+        for _n, _q in zip(N_QUERY, qst_avg):
+            _f.write(f"{_n:.6f},{_q:.6f}\n")
+    print(f"Q_st CSV saved → {qst_csv_path}")
+
+    # ------------------------------------------------------------------ #
     # Pressure axis at T = 298 K                                         #
     # ------------------------------------------------------------------ #
     p_298 = get_p_at_298(df_model, N_QUERY)  # bar
