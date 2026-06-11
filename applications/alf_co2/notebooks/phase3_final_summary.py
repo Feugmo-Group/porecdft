@@ -194,7 +194,7 @@ ax_qst.text(0.98, 0.97, rmse_text.strip(), transform=ax_qst.transAxes,
             bbox=dict(boxstyle='round,pad=0.4', fc='lightyellow', ec='gray', alpha=0.9))
 
 fig.suptitle("CO₂/ALF cDFT — Final Results Summary\n"
-             "FMT-aWBII + Wertheim association + elastic framework (porecdft v1)",
+             "FMT-aWBII + Wertheim association + elastic framework",
              fontsize=13, fontweight='bold')
 fig.savefig(OUT_FIG / "31_phase3_final_summary.png", dpi=150, bbox_inches='tight')
 plt.close(fig)
