@@ -10,46 +10,50 @@ The CO₂/aluminum-formate (ALF) system is the primary validation benchmark; H�
 
 ## Installation
 
-### Recommended: uv (fast)
-
-[uv](https://docs.astral.sh/uv/) is the recommended way to install porecdft. It resolves dependencies in seconds and creates an isolated environment automatically.
+### With uv (recommended — fast dependency resolution)
 
 ```bash
-# 1. Install uv (once)
-curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
-# or: pip install uv
-
-# 2. Clone the repository
 git clone https://github.com/Feugmo-Group/porecdft.git
 cd porecdft
 
-# 3. Create a virtual environment and install
-uv venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
-uv pip install -e .            # core: NumPy, SciPy, pymatgen, matplotlib
+# CPU machine
+uv sync
 
-# 4. Optional: JAX for GPU-accelerated Vext computation
-uv pip install -e ".[jax]"
+# GPU machine — CUDA JAX + Warp in one step
+uv sync --extra gpu
 ```
 
-### pip / conda
+### With pip
 
 ```bash
-git clone https://github.com/Feugmo-Group/porecdft.git
-cd porecdft
-pip install -e .
+pip install -e .           # minimal (CPU)
+pip install -e ".[dev]"    # + pytest, ruff, black
+pip install -e ".[gpu]"    # + CUDA JAX + NVIDIA Warp (GPU machine)
+pip install -e ".[warp]"   # + Warp only (manage JAX separately)
+```
+
+### Conda environment (used in development)
+
+The `jax` conda environment contains all dependencies:
+
+```bash
+conda activate jax
+pip install -e ".[dev]"
+pytest -m "not slow"
 ```
 
 ### Requirements
 
-| Package    | Minimum | Tested  |
-|------------|---------|---------|
-| Python     | 3.10    | 3.12    |
-| NumPy      | 2.0     | 2.3     |
-| SciPy      | 1.10    | 1.15    |
-| pymatgen   | 2024.1  | 2025.6  |
-| matplotlib | 3.8     | 3.10    |
-| JAX *(opt)*| 0.4     | 0.6     |
+| Package      | Minimum | Tested  |
+|--------------|---------|---------|
+| Python       | 3.10    | 3.12    |
+| NumPy        | 2.0     | 2.3     |
+| SciPy        | 1.10    | 1.15    |
+| pymatgen     | 2024.1  | 2025.6  |
+| matplotlib   | 3.8     | 3.10    |
+| equinox      | 0.13    | 0.13    |
+| JAX *(opt)*  | 0.4     | 0.6     |
+| warp-lang *(opt)* | 1.4 | 1.4   |
 
 > **Note:** CIF files are read with `pymatgen.io.cif`. The `ase` package is **not** required.
 
