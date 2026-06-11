@@ -213,6 +213,33 @@ def build_vext_3d(
 # 4. CDFT ISOTHERM  (aWBII+WDA, Peng-Robinson bulk, Anderson + Picard fallback)
 # ════════════════════════════════════════════════════════════════════════════
 
+def _linear_picard(rho_init, rho_b, vext_3d, T_K, c1_fn, c1_b,
+                   rho_max, access_mask, alpha=0.02, max_iter=50000, tol=1e-5):
+    """Linear-space Picard iteration matching legacy notebook.
+
+    rho_new = (1-α)*rho + α*clip(rho_b*exp(clip(-Vext/T+c1-c1_b,-50,50)), 0, rho_max)
+    Repulsive voxels can go to zero because the rho_target clamp is one-sided.
+    """
+    rho = rho_init.copy()
+    converged = False
+    for _ in range(max_iter):
+        c1      = c1_fn(rho)
+        exp_arg = np.clip(-vext_3d / T_K + c1 - c1_b, -50.0, 50.0)
+        rho_tgt = np.where(access_mask,
+                           np.clip(rho_b * np.exp(exp_arg), 0.0, rho_max),
+                           0.0)
+        rho_new = np.where(access_mask,
+                           np.clip((1 - alpha) * rho + alpha * rho_tgt, 1e-16, rho_max),
+                           1e-16)
+        # Check residual (rho_tgt - rho), not step size (alpha * residual)
+        err = float(np.max(np.abs(rho_tgt - rho)))
+        rho = rho_new
+        if err < tol:
+            converged = True
+            break
+    return rho, converged
+
+
 def run_isotherm_cdft(
     vext_3d: np.ndarray,
     spacings: np.ndarray,
@@ -245,68 +272,87 @@ def run_isotherm_cdft(
     # Accessibility mask: voxels where Vext > 50*T are hard walls
     access_mask = (vext_3d < 50.0 * T_K)
 
-    # c1 wrapper: numpy in → numpy out (safe for numpy-based solver)
-    def c1_fn(rho_np: np.ndarray) -> np.ndarray:
-        return np.asarray(wda.c1(jnp.asarray(rho_np), dx, dy, dz))
-
-    # FMT packing-fraction ceiling for initialisation clamp
+    # FMT packing-fraction ceiling (η=0.45 → rho_max)
     d = wda.d
     rho_max = float(0.45 * 6.0 / (np.pi * d**3))
+
+    def c1_fn(rho_np: np.ndarray) -> np.ndarray:
+        return np.asarray(wda.c1(jnp.asarray(rho_np), dx, dy, dz))
 
     results = {k: [] for k in ("P", "N_abs", "extra_gL", "wt_pct", "mmol_g", "converged")}
     mass_frame_g = mss_u * 1.66054e-24   # g per unit cell
 
     rho_prev     = None
     rho_prev_b   = None
+    N_prev       = None
     max_possible = V_cell / (SIGMA_H2**3 * 0.5)
+
+    def boltzmann_init(rho_b):
+        exponent = np.clip(-vext_3d / T_K, -50.0, 20.0)
+        return np.where(access_mask,
+                        np.clip(rho_b * np.exp(exponent), 1e-16, rho_max),
+                        1e-16)
 
     for P in pressures_bar:
         print(f"\n  P = {P:6.1f} bar", end="  ", flush=True)
         rho_b = H2_PR.bulk_density(P, T_K)
         c1_b  = wda.c1_bulk(rho_b)
 
-        # Initial density
+        # Pressure continuation warm-start
         if rho_prev is not None:
             rho_init = np.clip(rho_prev * (rho_b / rho_prev_b), 1e-16, rho_max)
             rho_init = np.where(access_mask, rho_init, 1e-16)
         else:
-            exponent = np.clip(-vext_3d / T_K, -50.0, 20.0)
-            rho_init = np.where(access_mask,
-                                np.clip(rho_b * np.exp(exponent), 1e-16, rho_max),
-                                1e-16)
+            rho_init = boltzmann_init(rho_b)
 
         # Anderson solve
         res = anderson_solve(
             rho_init=rho_init, rho_bulk=rho_b,
             Vext_K=vext_3d, temperature_K=T_K,
             c1_callable=c1_fn, c1_bulk=c1_b,
-            m=8, beta=0.3, max_iter=2000, tol=1e-5,
+            m=8, beta=0.1, max_iter=8000, tol=1e-5,
             accessibility_mask=access_mask,
-            safeguard_alpha=0.02, picard_warmup=50,
+            safeguard_alpha=0.01, picard_warmup=100,
         )
 
         rho_sol = res.rho
         N_abs   = float(rho_sol.sum() * dV)
 
-        # Fallback to Picard if Anderson diverged
+        # Monotonicity guard: N_abs should not jump more than 2.5× previous value
+        if N_prev is not None and N_abs > 2.5 * N_prev:
+            N_abs = np.inf
+
+        # Fallback 1: slow linear Picard from continuation init (near correct branch).
+        # Fallback 2: linear Picard from Boltzmann init (if continuation also fails).
         if not np.isfinite(N_abs) or N_abs > max_possible or N_abs < 0:
-            print("Anderson diverged → Picard...", end="  ", flush=True)
-            res = picard_solve(
-                rho_init=rho_init, rho_bulk=rho_b,
-                Vext_K=vext_3d, temperature_K=T_K,
-                c1_callable=c1_fn, c1_bulk=c1_b,
-                alpha=0.005, max_iter=20000, tol=1e-5,
-                accessibility_mask=access_mask,
+            print("→ Picard(cont)...", end="  ", flush=True)
+            rho_sol, conv = _linear_picard(
+                rho_init, rho_b, vext_3d, T_K,
+                c1_fn, c1_b, rho_max, access_mask,
+                alpha=0.005, max_iter=200000, tol=1e-5,
             )
-            rho_sol = res.rho
-            N_abs   = float(rho_sol.sum() * dV)
+            N_abs = float(rho_sol.sum() * dV)
+
+            if not np.isfinite(N_abs) or N_abs > max_possible or N_abs < 0:
+                print("→ Picard(Boltz)...", end="  ", flush=True)
+                rho_sol, conv = _linear_picard(
+                    boltzmann_init(rho_b), rho_b, vext_3d, T_K,
+                    c1_fn, c1_b, rho_max, access_mask,
+                    alpha=0.02, max_iter=50000, tol=1e-5,
+                )
+                N_abs = float(rho_sol.sum() * dV)
+
+            class _Res:
+                converged = conv
+                rho = rho_sol
+            res = _Res()
 
         if not np.isfinite(N_abs) or N_abs > max_possible or N_abs < 0:
             print(f"FAILED (Nabs={N_abs:.2e})", flush=True)
             rho_prev = rho_prev_b = None
             continue
 
-        rho_prev, rho_prev_b = rho_sol.copy(), rho_b
+        rho_prev, rho_prev_b, N_prev = rho_sol.copy(), rho_b, N_abs
 
         N_bulk     = rho_b * V_cell
         total_gL   = N_abs  * MASS_H2 / NA * 1e27 / V_cell
@@ -386,7 +432,7 @@ print(f"  Grid: {n_pts[0]}×{n_pts[1]}×{n_pts[2]}  dV={dV:.4f} Å³  "
 
 # ── Panel A: full-pressure cDFT at 298 K ────────────────────────────────────
 T_cdft   = 298.0
-P_cdft   = [1, 5, 10, 20, 40, 60, 80, 100, 120, 150, 200, 250, 300, 400, 500]
+P_cdft   = [1, 5, 10, 20, 40, 60, 80, 100, 120, 150, 200, 250, 300, 400, 450, 500]
 iso_cache = os.path.join(RESULTS_DIR, "isotherm_h2_cof333_298K.npz")
 
 print(f"\nRunning aWBII+WDA isotherm at {T_cdft} K...", flush=True)
@@ -425,7 +471,7 @@ P_cdft_low      = iso["P"][iso["P"] <= 20]
 # ════════════════════════════════════════════════════════════════════════════
 fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
 
-# ── Panel A ─────────────────────────────────────────────────────────────────
+# ── Panel A: full-pressure isotherm at 298 K ────────────────────────────────
 ax = axes[0]
 l1, = ax.plot(iso["P"], iso["wt_pct"],
               color="#d6604d", lw=2.0, marker="o", ms=5,
@@ -449,17 +495,16 @@ l2, = ax2.plot(iso["P"], iso["extra_gL"],
                color="#8c564b", lw=1.5, ls="--", marker="s", ms=4, alpha=0.85,
                label="Excess uptake (g L$^{-1}$)")
 ax2.spines["top"].set_visible(False)
-
 ax.legend([l1, l2], [l1.get_label(), l2.get_label()],
           fontsize=9, framealpha=0.85, loc="upper left")
 
-# ── Panel B ─────────────────────────────────────────────────────────────────
+# ── Panel B: Henry-regime isotherm at multiple T ────────────────────────────
 ax = axes[1]
 for T in temps:
     ax.plot(P_henry, henry_results[T],
             color=colors_T[T], lw=2.0, marker="o", ms=5, label=labels_T[T])
 
-# Overlay low-P cDFT points at 298 K
+# Overlay cDFT points at 298 K in low-P range
 if len(mmol_g_cdft_low):
     ax.plot(P_cdft_low, mmol_g_cdft_low,
             color="#d6604d", lw=0, marker="^", ms=7, alpha=0.7,
