@@ -63,62 +63,52 @@ Scripts cache intermediate results under `applications/*/results/` (not tracked 
 
 ### CO₂ / ALF figures
 
-Run the scripts in the order shown — later scripts depend on CSV files produced by earlier ones.
+#### Phase 1 — Force-field validation (not paper figures)
+
+These scripts tune and validate the external potential against DFT binding energies.
+They do not produce paper figures but their outputs are referenced in the Methods section.
 
 ```bash
-# ── Figure 00  (Evans 2022 digitised data reference check) ────────────────────
-# Plots the hand-digitised experimental isotherms used as reference throughout.
-# Runtime: <5 s. No prior results needed.
-# Note: figures/00_evans_digitized_check.png is also tracked in git as reference.
-uv run python applications/alf_co2/notebooks/phase0_evans_check.py
-# Output: figures/00_evans_digitized_check.png
+uv run python applications/alf_co2/notebooks/phase0_evans_check.py        # digitised data check
+uv run python applications/alf_co2/notebooks/phase1_vext_validation.py    # SC/LC site probe (figs 01–04)
+uv run python applications/alf_co2/notebooks/phase1d_lj_tuning.py         # LJ ε scaling
+uv run python applications/alf_co2/notebooks/phase1e_smeared_coulomb_tuning.py  # Coulomb σ tuning
+```
 
-# ── Figure 01, 02, 03, 04  (Phase 1 — Vext validation) ───────────────────────
-# Probes the SC and LC binding sites with EPM2 CO₂ over 100 Fibonacci orientations.
-# Runtime: ~5 min. No prior results needed.
-uv run python applications/alf_co2/notebooks/phase1_vext_validation.py
-# Output: figures/01_vext_probe_multi_slice.png
-#         figures/02_rose_SC.png  figures/02_rose_LC.png
-#         figures/03_hist_SC.png  figures/03_hist_LC.png
-#         figures/04_decomposition.png
+#### Paper figures — minimal pipeline
 
-# ── Phase 2 baseline scripts (needed for figure 35) ──────────────────────────
-# Each script builds a Vext grid cache (~30 min first run, instant thereafter).
-uv run python applications/alf_co2/notebooks/phase2_baseline_isotherm.py
+Run the scripts in the order shown. Each step depends on CSV files produced by earlier ones.
+Vext caches under `results/vext_cache*/` are built on first run (~30 min–4 h) and reused thereafter.
+
+```bash
+# Step 1 — FMT-aWBII self-consistent isotherm (provides FMT reference curve)
+# Runtime: ~1 h first run. Writes: results/phase2_2_fmt_isotherms.csv
 uv run python applications/alf_co2/notebooks/phase2_2_fmt_isotherm.py
-uv run python applications/alf_co2/notebooks/phase2_3_flexible_host.py
-uv run python applications/alf_co2/notebooks/phase2_4_wertheim_assoc.py
-uv run python applications/alf_co2/notebooks/phase2_5_flex_wertheim.py
+# Output: figures/15_phase2_2_fmt_isotherms.png
 
-# ── Figure 26, 24, 25  (Phase 3 — production isotherm parameter sweep) ───────
-# Sweeps K_eff × ε_assoc × T; uses/builds strain-dependent Vext cache.
-# Runtime: ~2–4 h first run (builds vext_cache_flex/), ~20 min on cached run.
+# Step 2 — Production isotherm: K_eff × ε_assoc × T parameter sweep
+# Runtime: ~2–4 h first run (builds vext_cache_flex/). Writes: results/phase3_production_isotherms.csv
 uv run python applications/alf_co2/notebooks/phase3_production_isotherm.py
 # Output: figures/24_phase3_param_sweep.png
 #         figures/25_phase3_best_model.png
 #         figures/26_phase3_parity.png
 
-# ── Figure 27  (isosteric heat Qst) ──────────────────────────────────────────
-# Runtime: ~2 min (reads phase3 CSV).
+# Step 3 — Isosteric heat Q_st (Clausius–Clapeyron from step 2 CSV)
+# Runtime: ~2 min. Writes: results/phase3_qst.csv
 uv run python applications/alf_co2/notebooks/phase3_qst.py
 # Output: figures/27_phase3_qst.png
 
-# ── Figure 31  (final summary, all temperatures) ─────────────────────────────
+# Step 4 — Paper summary figures (read steps 1–3 CSVs; no new cDFT runs)
 uv run python applications/alf_co2/notebooks/phase3_final_summary.py
 # Output: figures/31_phase3_final_summary.png
 
-# ── Figure 32  (Henry constant cross-check) ──────────────────────────────────
 uv run python applications/alf_co2/henry_crosscheck.py
 # Output: figures/32_henry_crosscheck.png
 
-# ── Figures 33 + 34  (N₂ isotherm + IAST CO₂/N₂ selectivity) ────────────────
-# Builds N₂ Vext cache (~15 min first run) then computes 298 K isotherm.
 uv run python applications/alf_co2/notebooks/n2_isotherm_selectivity.py
 # Output: figures/33_n2_isotherm_298K.png
 #         figures/34_co2_n2_selectivity.png
 
-# ── Figure 35  (3-panel experiment comparison, 273/298/323 K) ─────────────────
-# Reads phase2 and phase3 CSVs — run those first.
 uv run python applications/alf_co2/notebooks/phase_summary_figure.py
 # Output: figures/35_co2_vs_experiment_final.png
 ```
