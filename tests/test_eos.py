@@ -28,6 +28,7 @@ from porecdft.eos import (
     CO2_SW,
     CO2_SRK,
     CH4_SRK,
+    H2O_CPA,
     density_from_pressure,
 )
 from porecdft.eos.base import EOSBase
@@ -73,6 +74,9 @@ EOS_CASES: list[EOSCase] = [
     EOSCase("CO2_SRK @ 298K, 1bar", CO2_SRK, 1.0, 298.0, rho_ref=2.43e-5, rho_rel_tol=3e-2),
     EOSCase("CO2_SRK @ 298K, 50bar", CO2_SRK, 50.0, 298.0),
     EOSCase("CH4_SRK @ 298K, 1bar", CH4_SRK, 1.0, 298.0, rho_ref=2.43e-5, rho_rel_tol=3e-2),
+    # CPA — water 4C scheme (Kontogeorgis 1999).
+    EOSCase("H2O_CPA @ 373K, 1bar", H2O_CPA, 1.0, 373.0, rho_ref=1.95e-5, rho_rel_tol=5e-2),
+    EOSCase("H2O_CPA @ 298K, 0.05bar", H2O_CPA, 0.05, 298.0),
 ]
 
 
