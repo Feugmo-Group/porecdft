@@ -1,36 +1,21 @@
-"""Solver comparison for H₂ adsorption in COF-333-CoCl₂.
+"""Solver comparison for H₂/COF-333-CoCl₂ — Morse+LJ Vext + aWBII+WDA c₁.
 
-Runs four solvers on the ideal-gas (c1=0) grand-potential problem:
-  1. Picard  (classical mixing, α=0.1)
-  2. Anderson (accelerated fixed-point, m=8)
-  3. Adam    (JAX gradient descent via optax, lr=5e-3)
-  4. FIRE2   (NonlinearCG via optimistix)
+Runs four porecdft solvers on the full self-consistent grand-potential problem
+at T=298 K (same physics as make_h2_isotherm_cdft.py):
 
-Functional: c1=0 (ideal gas).  The EL equation is then:
-  ρ*(r) = ρ_bulk · exp(−Vext(r)/T)
-which is solvable exactly — this is the Henry formula.  All four solvers
-should converge to the identical density profile, with the comparison showing
-purely the convergence *behaviour* differences.
+  1. Picard   — linear mixing, α=0.02, pressure continuation
+  2. Anderson — m=8, β=0.1, pressure continuation
+  3. Adam     — optax Adam (lr=2e-3), Boltzmann warm-start per pressure
+  4. FIRE2    — optimistix NonlinearCG, Boltzmann warm-start per pressure
 
-Using c1=0 avoids the inconsistency between the Picard fixed-point iteration
-and the gradient-based Ω minimisation (which differs when the excess free
-energy functional F_exc is linearized as ∫(−c1+c1_b)ρ dV).
-
-Two temperatures are shown:
-  T=77 K  — cryogenic H₂ storage; large Boltzmann contrasts → slow Picard.
-  T=298 K — room temperature; moderate contrasts → fast convergence.
-
-Figure panels:
-  A. H₂ isotherm (N_ads vs P, 0.1–100 bar) — both T, all solvers overlay
-  B. Convergence curves at P=10 bar, T=77 K — iterations to tolerance
-
-Outputs:
-  applications/h2_cof/figures/h2_solver_comparison.png
+Outputs (two separate files):
+  h2_solver_comparison_isotherm.png — N_ads vs P for all four solvers
+  h2_solver_comparison_loss.png     — convergence history at P=10 bar
 """
 from __future__ import annotations
 
-import sys
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -40,7 +25,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_PARENT = _REPO_ROOT.parent
+_PARENT    = _REPO_ROOT.parent
 for _p in (str(_REPO_ROOT), str(_PARENT)):
     try: sys.path.remove(_p)
     except ValueError: pass
@@ -49,399 +34,413 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 ROOT = str(_REPO_ROOT)
 
+import jax
+jax.config.update("jax_enable_x64", True)
+import jax.numpy as jnp
+
 from pymatgen.core import Structure
 
 from porecdft.structure.host import HostAtoms
 from porecdft.structure.supercell import build_supercell
+from porecdft.eos import H2_PR
+from porecdft.functional import LJWDAFunctional
 from porecdft.solver import (
     picard_solve, anderson_solve,
     jax_solve, OPTAX_AVAILABLE, EQX_AVAILABLE,
     fire2_solve, OPTX_AVAILABLE,
 )
-import jax.numpy as jnp
 
-# ─── shared constants ────────────────────────────────────────────────────────
+# ── constants (identical to make_h2_isotherm_cdft.py) ────────────────────────
+KCAL_TO_K  = 503.228
+SIGMA_H2   = 2.83
+EPSILON_H2 = 59.7
+RCUT_H2    = 5.0 * SIGMA_H2
+NA         = 6.022140857e23
+
+MORSE_METALS = {"Co", "Fe", "Ni", "Cu", "Mn"}
+MORSE_PARAMS = {
+    "Co": dict(D_e=2*0.879*KCAL_TO_K, a=0.850, r_e=2.985, cutoff=12.0),
+    "Fe": dict(D_e=2*1.092*KCAL_TO_K, a=1.180, r_e=3.015, cutoff=12.0),
+    "Ni": dict(D_e=2*1.154*KCAL_TO_K, a=1.210, r_e=3.207, cutoff=12.0),
+    "Cu": dict(D_e=2*0.818*KCAL_TO_K, a=1.462, r_e=2.931, cutoff=12.0),
+    "Mn": dict(D_e=2*0.994*KCAL_TO_K, a=0.990, r_e=3.015, cutoff=12.0),
+}
+DREIDING = {
+    "H":  (2.84642,   7.64893),
+    "C":  (3.47299,  47.85620),
+    "N":  (3.26256,  38.94920),
+    "O":  (3.03315,  48.15810),
+    "F":  (3.09320,  36.48345),
+    "Al": (3.91104, 155.99820),
+    "Si": (3.80414, 155.99820),
+    "Br": (3.51905, 186.19140),
+    "Cu": (3.11369,   2.51610),
+    "Zn": (4.04468,  27.67710),
+    "Co": (2.55800,   7.05000),
+    "Cl": (3.52000, 114.23000),
+}
+MASS_MAP = {
+    "H": 1.00784, "C": 12.0107, "N": 14.0067, "O": 15.999,
+    "Co": 58.933,  "Cl": 35.45, "F": 18.998,  "Al": 26.9815,
+    "Si": 28.0855, "Br": 79.904,"Cu": 63.546,  "Zn": 65.38,
+    "Fe": 55.845,  "Ni": 58.693,"Mn": 54.938,
+}
+
 STRUCTURES_DIR = os.path.join(ROOT, "applications/h2_cof/structures")
+RESULTS_DIR    = os.path.join(ROOT, "applications/h2_cof/results")
 FIGURES_DIR    = os.path.join(ROOT, "applications/h2_cof/figures")
+os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(FIGURES_DIR, exist_ok=True)
 
-SIGMA_H2   = 2.83    # Å  TraPPE single-site
-EPSILON_H2 = 59.7    # K
-RCUT_H2    = 5.0 * SIGMA_H2
-KCAL_TO_K  = 503.228
-
-# Morse parameters (same as make_h2_isotherm.py)
-from porecdft.forcefield.morse import MorseParam
-MORSE_PARAMS = {
-    "Co": MorseParam("Co", D_e=2 * 0.879 * KCAL_TO_K, a=0.850, r_e=2.985),
-    "Fe": MorseParam("Fe", D_e=2 * 1.092 * KCAL_TO_K, a=1.180, r_e=3.015),
-    "Ni": MorseParam("Ni", D_e=2 * 1.154 * KCAL_TO_K, a=1.210, r_e=3.207),
-    "Cu": MorseParam("Cu", D_e=2 * 0.818 * KCAL_TO_K, a=1.462, r_e=2.931),
-    "Mn": MorseParam("Mn", D_e=2 * 0.994 * KCAL_TO_K, a=0.990, r_e=3.015),
-}
-MORSE_METALS = set(MORSE_PARAMS.keys())
-
-from porecdft.io.forcefield import FFEntry
-DREIDING_LJ = {
-    "H":  FFEntry("H",  2.84642,   7.64893, "DREIDING"),
-    "C":  FFEntry("C",  3.47299,  47.85620, "DREIDING"),
-    "N":  FFEntry("N",  3.26256,  38.94920, "DREIDING"),
-    "O":  FFEntry("O",  3.03315,  48.15810, "DREIDING"),
-    "F":  FFEntry("F",  3.09320,  36.48345, "DREIDING"),
-    "Al": FFEntry("Al", 3.91104, 155.99820, "DREIDING"),
-    "Si": FFEntry("Si", 3.80414, 155.99820, "DREIDING"),
-    "Br": FFEntry("Br", 3.51905, 186.19140, "DREIDING"),
-    "Cu": FFEntry("Cu", 3.11369,   2.51610, "DREIDING"),
-    "Zn": FFEntry("Zn", 4.04468,  27.67710, "DREIDING"),
-    "Co": FFEntry("Co", 2.55800,   7.05000, "DREIDING"),
-    "Cl": FFEntry("Cl", 3.52000, 114.23000, "DREIDING"),
-}
-H2_FF_SITE = {"H2": FFEntry("H2", SIGMA_H2, EPSILON_H2, "TraPPE")}
-
-kB_Pa_A3 = 1.380649e-23 * 1e30   # Pa·Å³/K
+T_K = 298.0
+P_ISO = np.array([1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 150.0, 300.0, 500.0])
+P_CONV = 10.0   # state point for convergence demo
 
 
-# ─── structure & Vext ────────────────────────────────────────────────────────
+# ── structure ────────────────────────────────────────────────────────────────
 
 def load_host(name: str) -> HostAtoms:
-    cif_path = os.path.join(STRUCTURES_DIR, name + ".cif")
-    pmg = Structure.from_file(cif_path)
+    cif = os.path.join(STRUCTURES_DIR, name + ".cif")
+    pmg = Structure.from_file(cif)
     return HostAtoms(
         positions=pmg.cart_coords.copy(),
         species=[str(s) for s in pmg.species],
         charges=np.zeros(pmg.num_sites),
         lattice=pmg.lattice.matrix.copy(),
-        source=cif_path,
+        source=cif,
     )
 
 
-def compute_vext_flat(host: HostAtoms, grid_spacing: float = 0.7,
-                      supercell=(3, 3, 3)):
+# ── Vext 3D  (reuses cache from make_h2_isotherm_cdft.py) ───────────────────
+
+def build_vext_3d(host, grid_spacing=0.25*SIGMA_H2, supercell=(3,3,3),
+                  cache_path=None):
+    if cache_path and os.path.exists(cache_path):
+        data = np.load(cache_path, allow_pickle=True).item()
+        print(f"  Loaded Vext from cache: {cache_path}", flush=True)
+        return data["vext_3d"], tuple(data["n_pts"]), data["spacings"], float(data["dV"])
+
     nx, ny, nz = supercell
     host_sc = build_supercell(host, nx, ny, nz)
-    shift = (-(nx // 2) * host.lattice[0]
-             - (ny // 2) * host.lattice[1]
-             - (nz // 2) * host.lattice[2])
+    shift = (-(nx//2)*host.lattice[0] - (ny//2)*host.lattice[1]
+             - (nz//2)*host.lattice[2])
     pos_sc  = host_sc.positions + shift
     spec_sc = host_sc.species
 
     lengths = np.linalg.norm(host.lattice, axis=1)
     n_pts   = tuple(max(2, int(np.ceil(l / grid_spacing))) for l in lengths)
-    fx = np.linspace(0, 1, n_pts[0], endpoint=False)
-    fy = np.linspace(0, 1, n_pts[1], endpoint=False)
-    fz = np.linspace(0, 1, n_pts[2], endpoint=False)
-    Fx, Fy, Fz = np.meshgrid(fx, fy, fz, indexing="ij")
-    frac = np.stack([Fx, Fy, Fz], axis=-1).reshape(-1, 3)
-    grid = frac @ host.lattice
+    spacings = np.array([lengths[i] / n_pts[i] for i in range(3)])
+    dV       = float(spacings.prod())
 
-    lj_params = {}
-    for el in set(spec_sc):
-        if el in MORSE_METALS or el not in DREIDING_LJ:
-            continue
-        ff = DREIDING_LJ[el]
-        lj_params[el] = (0.5 * (SIGMA_H2 + ff.sigma),
-                         float(np.sqrt(EPSILON_H2 * ff.epsilon)))
+    grid_xyz = (np.stack(np.meshgrid(
+        np.linspace(0, 1, n_pts[0], endpoint=False),
+        np.linspace(0, 1, n_pts[1], endpoint=False),
+        np.linspace(0, 1, n_pts[2], endpoint=False),
+        indexing="ij"), axis=-1).reshape(-1, 3) @ host.lattice)
 
-    vext = np.zeros(len(grid))
+    lj_params = {el: (0.5*(SIGMA_H2+s), float(np.sqrt(EPSILON_H2*e)))
+                 for el,(s,e) in DREIDING.items()
+                 if el not in MORSE_METALS}
+
+    vext = np.zeros(len(grid_xyz))
     for el, pos_i in zip(spec_sc, pos_sc):
-        dr = grid - pos_i
-        r  = np.sqrt(np.maximum(np.einsum("gi,gi->g", dr, dr), 1e-8))
+        dr = grid_xyz - pos_i
+        r  = np.sqrt(np.einsum("gi,gi->g", dr, dr).clip(1e-8))
         if el in MORSE_METALS:
             mp = MORSE_PARAMS[el]
-            mask = r < 12.0
-            if np.any(mask):
-                x = np.exp(-mp.a * (r[mask] - mp.r_e))
-                v = mp.D_e * ((1 - x)**2 - 1)
-                vext[mask] += np.clip(v, -mp.D_e, 1e5)
+            mask = r < mp["cutoff"]
+            if mask.any():
+                x = np.exp(-mp["a"] * (r[mask] - mp["r_e"]))
+                vext[mask] += np.clip(mp["D_e"]*((1-x)**2-1), -mp["D_e"], 1e5)
         elif el in lj_params:
             sig, eps = lj_params[el]
             mask = r < RCUT_H2
-            if np.any(mask):
+            if mask.any():
                 sr6 = (sig / r[mask])**6
-                vext[mask] += 4 * eps * (sr6**2 - sr6)
+                vext[mask] += 4*eps*(sr6**2 - sr6)
 
-    return vext, n_pts
-
-
-# ─── physics helpers ─────────────────────────────────────────────────────────
-
-def ideal_gas_density(P_bar: float, T_K: float) -> float:
-    """ρ_bulk in molecules/Å³ from ideal gas law."""
-    return P_bar * 1e5 / (kB_Pa_A3 * T_K)
+    vext_3d = vext.reshape(n_pts)
+    if cache_path:
+        np.save(cache_path, {"vext_3d": vext_3d, "n_pts": np.array(n_pts),
+                              "spacings": spacings, "dV": dV})
+        print(f"  Cached Vext → {cache_path}", flush=True)
+    return vext_3d, n_pts, spacings, dV
 
 
-# ── Ideal-gas functional (c1=0) ──────────────────────────────────────────────
-# EL: ρ*(r) = ρ_bulk · exp(−Vext/T) — Henry regime, exact analytic solution.
-# All four solvers converge to the same answer; the comparison shows convergence.
+# ── solver runners ───────────────────────────────────────────────────────────
 
-def cs_c1_np(rho_arr):
-    """c1=0 (ideal gas) for numpy arrays."""
-    return np.zeros_like(rho_arr)
-
-def cs_c1_jax(rho_arr):
-    """c1=0 (ideal gas), JAX-traceable."""
-    return jnp.zeros_like(rho_arr)
-
-def cs_c1_bulk(rho_b: float) -> float:
-    return 0.0
+def boltzmann_init(vext_3d, rho_b, rho_max, access):
+    exp = np.clip(-vext_3d / T_K, -50.0, 20.0)
+    return np.where(access, np.clip(rho_b * np.exp(exp), 1e-16, rho_max), 1e-16)
 
 
-def henry_exact(vext_flat, T_K, V_cell, P_bar, mss_u):
-    """Exact Henry-regime N_ads in mmol/g (c1=0, analytical reference)."""
-    rho_b = ideal_gas_density(P_bar, T_K)
-    acc   = vext_flat < 5.0 * T_K
-    v     = np.clip(vext_flat[acc], -5.0 * T_K, None)
-    boltz = np.exp(-v / T_K)
-    dV    = V_cell / len(vext_flat)
-    N_ads = rho_b * boltz.sum() * dV
-    NA    = 6.022140857e23
-    mass_g = mss_u * 1.66054e-24
-    return N_ads / NA * 1000.0 / mass_g
-
-
-def solver_isotherm(vext_flat_clip, dV, V_cell, mss_u, T_K,
-                    P_bar_arr, solver_name: str, **kw):
-    """Return N_ads (mmol/g) for each P using Carnahan-Starling c1."""
-    NA     = 6.022140857e23
-    mass_g = mss_u * 1.66054e-24
-    results = []
-    for P in P_bar_arr:
-        rho_b       = ideal_gas_density(P, T_K)
-        c1_bulk_val = cs_c1_bulk(rho_b)
-        rho_init    = np.full(len(vext_flat_clip), rho_b)
-
-        if solver_name == "picard":
-            res = picard_solve(rho_init, rho_b, vext_flat_clip, T_K,
-                               cs_c1_np, c1_bulk_val, **kw)
-            rho_out = res.rho
-        elif solver_name == "anderson":
-            res = anderson_solve(rho_init, rho_b, vext_flat_clip, T_K,
-                                 cs_c1_np, c1_bulk_val, **kw)
-            rho_out = res.rho
-        elif solver_name == "adam":
-            res = jax_solve(rho_init, rho_b, vext_flat_clip, T_K,
-                            cs_c1_jax, c1_bulk_val, dV=dV, **kw)
-            rho_out = res.rho
-        elif solver_name == "fire2":
-            res = fire2_solve(rho_init, rho_b, vext_flat_clip, T_K,
-                              cs_c1_jax, c1_bulk_val, dV=dV, **kw)
-            rho_out = res.rho
+def run_picard(vext_3d, dV, wda, access, rho_max, dx, dy, dz):
+    c1_fn = lambda rho: np.asarray(wda.c1(jnp.asarray(rho), dx, dy, dz))
+    N_arr, rho_prev, rho_prev_b = [], None, None
+    for P in P_ISO:
+        rho_b = H2_PR.bulk_density(P, T_K)
+        c1_b  = wda.c1_bulk(rho_b)
+        if rho_prev is not None:
+            rho0 = np.where(access, np.clip(rho_prev*(rho_b/rho_prev_b), 1e-16, rho_max), 1e-16)
         else:
-            raise ValueError(solver_name)
+            rho0 = boltzmann_init(vext_3d, rho_b, rho_max, access)
+        res = picard_solve(rho0, rho_b, vext_3d, T_K, c1_fn, c1_b,
+                           alpha=0.02, max_iter=50000, tol=1e-5,
+                           accessibility_mask=access)
+        rho_prev, rho_prev_b = res.rho.copy(), rho_b
+        N_arr.append(float(res.rho.sum() * dV))
+        print(f"  Picard  P={P:5.0f} bar  N={N_arr[-1]:.1f} mol/uc  "
+              f"conv={res.converged}", flush=True)
+    return np.array(N_arr)
 
-        N_ads = rho_out.sum() * dV
-        results.append(N_ads / NA * 1000.0 / mass_g)
-    return np.array(results)
+
+def run_anderson(vext_3d, dV, wda, access, rho_max, dx, dy, dz):
+    c1_fn = lambda rho: np.asarray(wda.c1(jnp.asarray(rho), dx, dy, dz))
+    N_arr, rho_prev, rho_prev_b = [], None, None
+    for P in P_ISO:
+        rho_b = H2_PR.bulk_density(P, T_K)
+        c1_b  = wda.c1_bulk(rho_b)
+        if rho_prev is not None:
+            rho0 = np.where(access, np.clip(rho_prev*(rho_b/rho_prev_b), 1e-16, rho_max), 1e-16)
+        else:
+            rho0 = boltzmann_init(vext_3d, rho_b, rho_max, access)
+        res = anderson_solve(rho0, rho_b, vext_3d, T_K, c1_fn, c1_b,
+                             m=8, beta=0.1, max_iter=8000, tol=1e-5,
+                             accessibility_mask=access,
+                             safeguard_alpha=0.01, picard_warmup=100)
+        rho_prev, rho_prev_b = res.rho.copy(), rho_b
+        N_arr.append(float(res.rho.sum() * dV))
+        print(f"  Anderson P={P:5.0f} bar  N={N_arr[-1]:.1f} mol/uc  "
+              f"conv={res.converged}", flush=True)
+    return np.array(N_arr)
 
 
-# ─── convergence demo at a single state point ────────────────────────────────
+def run_adam(vext_3d, dV, wda, access, rho_max, dx, dy, dz):
+    import optax
+    c1_fn = lambda rho: wda.c1(rho, dx, dy, dz)
+    N_arr, rho_prev, rho_prev_b = [], None, None
+    for P in P_ISO:
+        rho_b = H2_PR.bulk_density(P, T_K)
+        c1_b  = wda.c1_bulk(rho_b)
+        if rho_prev is not None:
+            rho0 = np.where(access, np.clip(rho_prev*(rho_b/rho_prev_b), 1e-16, rho_max), 1e-16)
+        else:
+            rho0 = boltzmann_init(vext_3d, rho_b, rho_max, access)
+        res = jax_solve(rho0, rho_b, vext_3d, T_K, c1_fn, c1_b, dV=dV,
+                        optimizer=optax.adam(2e-3), n_steps=5000, tol=1e-5)
+        rho_prev, rho_prev_b = np.asarray(res.rho).copy(), rho_b
+        N_arr.append(float(rho_prev.sum() * dV))
+        print(f"  Adam    P={P:5.0f} bar  N={N_arr[-1]:.1f} mol/uc  "
+              f"conv={res.converged}", flush=True)
+    return np.array(N_arr)
 
-def run_convergence_demo(vext_flat_clip, dV, T_K, P_bar):
-    rho_b = ideal_gas_density(P_bar, T_K)
-    c1_b  = cs_c1_bulk(rho_b)
-    rho_init = np.full(len(vext_flat_clip), rho_b)
+
+def run_fire2(vext_3d, dV, wda, access, rho_max, dx, dy, dz):
+    c1_fn = lambda rho: wda.c1(rho, dx, dy, dz)
+    N_arr, rho_prev, rho_prev_b = [], None, None
+    for P in P_ISO:
+        rho_b = H2_PR.bulk_density(P, T_K)
+        c1_b  = wda.c1_bulk(rho_b)
+        if rho_prev is not None:
+            rho0 = np.where(access, np.clip(rho_prev*(rho_b/rho_prev_b), 1e-16, rho_max), 1e-16)
+        else:
+            rho0 = boltzmann_init(vext_3d, rho_b, rho_max, access)
+        res = fire2_solve(rho0, rho_b, vext_3d, T_K, c1_fn, c1_b, dV=dV,
+                          rtol=1e-5, atol=1e-7, max_steps=20000)
+        rho_prev, rho_prev_b = np.asarray(res.rho).copy(), rho_b
+        N_arr.append(float(rho_prev.sum() * dV))
+        print(f"  FIRE2   P={P:5.0f} bar  N={N_arr[-1]:.1f} mol/uc  "
+              f"conv={res.converged}", flush=True)
+    return np.array(N_arr)
+
+
+# ── convergence demo at P_CONV ───────────────────────────────────────────────
+
+def run_convergence_demo(vext_3d, dV, wda, access, rho_max, dx, dy, dz):
+    rho_b = H2_PR.bulk_density(P_CONV, T_K)
+    c1_b  = wda.c1_bulk(rho_b)
+    rho0  = boltzmann_init(vext_3d, rho_b, rho_max, access)
+
+    c1_np  = lambda rho: np.asarray(wda.c1(jnp.asarray(rho), dx, dy, dz))
+    c1_jax = lambda rho: wda.c1(rho, dx, dy, dz)
+
     conv = {}
 
-    # Picard
     t0 = time.perf_counter()
-    r = picard_solve(rho_init, rho_b, vext_flat_clip, T_K,
-                     cs_c1_np, c1_b, alpha=0.1, max_iter=600, tol=1e-5)
-    conv["Picard"] = {
-        "history": r.error_history, "converged": r.converged,
-        "iters": r.iterations, "label": "‖Δρ‖/ρ_b",
-        "time_s": time.perf_counter() - t0,
-    }
+    r = picard_solve(rho0, rho_b, vext_3d, T_K, c1_np, c1_b,
+                     alpha=0.02, max_iter=50000, tol=1e-5,
+                     accessibility_mask=access)
+    conv["Picard"] = {"history": r.error_history, "iters": r.iterations,
+                      "converged": r.converged, "time_s": time.perf_counter()-t0,
+                      "ylabel": r"$\|\Delta\rho\|_\infty / \rho_b$"}
 
-    # Anderson
     t0 = time.perf_counter()
-    r = anderson_solve(rho_init, rho_b, vext_flat_clip, T_K,
-                       cs_c1_np, c1_b, m=8, beta=0.5, max_iter=300, tol=1e-6)
-    conv["Anderson"] = {
-        "history": r.error_history, "converged": r.converged,
-        "iters": r.iterations, "label": "max|F|",
-        "time_s": time.perf_counter() - t0,
-    }
+    r = anderson_solve(rho0, rho_b, vext_3d, T_K, c1_np, c1_b,
+                       m=8, beta=0.1, max_iter=8000, tol=1e-5,
+                       accessibility_mask=access,
+                       safeguard_alpha=0.01, picard_warmup=100)
+    conv["Anderson"] = {"history": r.error_history, "iters": r.iterations,
+                        "converged": r.converged, "time_s": time.perf_counter()-t0,
+                        "ylabel": r"$\max|F(\rho)|$"}
 
     if OPTAX_AVAILABLE and EQX_AVAILABLE:
         import optax
         t0 = time.perf_counter()
-        r = jax_solve(rho_init, rho_b, vext_flat_clip, T_K,
-                      cs_c1_jax, c1_b, dV=dV,
-                      optimizer=optax.adam(5e-3), n_steps=1000, tol=1e-6)
-        conv["Adam"] = {
-            "history": r.error_history, "converged": r.converged,
-            "iters": r.iterations, "label": "|ΔΩ|",
-            "time_s": time.perf_counter() - t0,
-        }
+        r = jax_solve(rho0, rho_b, vext_3d, T_K, c1_jax, c1_b, dV=dV,
+                      optimizer=optax.adam(2e-3), n_steps=5000, tol=1e-5)
+        conv["Adam"] = {"history": r.error_history, "iters": r.iterations,
+                        "converged": r.converged, "time_s": time.perf_counter()-t0,
+                        "ylabel": r"$|\Delta\Omega|$"}
+    else:
+        print("  Adam skipped (optax/equinox not available)")
 
     if OPTX_AVAILABLE:
         t0 = time.perf_counter()
-        r = fire2_solve(rho_init, rho_b, vext_flat_clip, T_K,
-                        cs_c1_jax, c1_b, dV=dV, rtol=1e-6, atol=1e-8)
-        conv["FIRE2"] = {
-            "converged": r.converged, "iters": r.iterations,
-            "history": [r.residual],  "label": "‖∇Ω‖",
-            "time_s": time.perf_counter() - t0,
-        }
+        r = fire2_solve(rho0, rho_b, vext_3d, T_K, c1_jax, c1_b, dV=dV,
+                        rtol=1e-5, atol=1e-7, max_steps=20000)
+        hist = getattr(r, "error_history", None) or [r.residual]
+        conv["FIRE2"] = {"history": hist,
+                         "iters": r.iterations, "converged": r.converged,
+                         "time_s": time.perf_counter()-t0,
+                         "ylabel": r"$\|\nabla\Omega\|$"}
+    else:
+        print("  FIRE2 skipped (optimistix not available)")
 
     return conv
 
 
-# ═════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 # MAIN
-# ═════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 
 def main():
     print("Loading COF-333-CoCl2...", flush=True)
     host   = load_host("COF-333-CoCl2")
     V_cell = host.cell_volume
-    mass_map = {
-        "H": 1.00784, "C": 12.0107, "N": 14.0067, "O": 15.999,
-        "Co": 58.933, "Cl": 35.45, "Fe": 55.845, "Ni": 58.693,
-        "Cu": 63.546, "Mn": 54.938, "Al": 26.9815, "Zn": 65.38,
-    }
-    mss = sum(mass_map.get(el, 0.0) for el in host.species)
+    mss    = sum(MASS_MAP.get(el, 0.0) for el in host.species)
+    mass_frame_g = mss * 1.66054e-24
     print(f"  V_cell={V_cell:.1f} Å³   mass={mss:.1f} u")
 
-    print("Building Vext grid (0.7 Å, 3×3×3)...", flush=True)
-    vext_flat, n_pts = compute_vext_flat(host, grid_spacing=0.7, supercell=(3, 3, 3))
-    dV = V_cell / len(vext_flat)
-    print(f"  grid {n_pts}, Ng={len(vext_flat)}, dV={dV:.4f} Å³")
-    print(f"  Vext raw [{vext_flat.min():.1f}, {np.percentile(vext_flat,99.9):.1f}] K")
+    # Reuse Vext cache from make_h2_isotherm_cdft.py
+    vext_cache = os.path.join(RESULTS_DIR, "vext_cache_h2_cof333.npy")
+    print("\nBuilding/loading Vext grid...", flush=True)
+    vext_3d, n_pts, spacings, dV = build_vext_3d(
+        host, grid_spacing=0.25*SIGMA_H2, supercell=(3,3,3),
+        cache_path=vext_cache,
+    )
+    dx, dy, dz = float(spacings[0]), float(spacings[1]), float(spacings[2])
+    print(f"  Grid {n_pts}  dV={dV:.4f} Å³  "
+          f"Vext ∈ [{vext_3d.min():.0f}, {np.percentile(vext_3d,99.9):.0f}] K")
 
-    # Clip Vext at ±5·T to remove hard-wall and deep-overlap voxels.
-    # T=77K: clip at ±385K;  T=298K: clip at ±1490K
-    T_conv = 77.0    # K — cryogenic; non-trivial convergence (large Boltzmann contrast)
-    T_iso  = 298.0   # K — room temperature isotherm
+    wda     = LJWDAFunctional(sigma=SIGMA_H2, epsilon=EPSILON_H2, temperature_K=T_K)
+    access  = vext_3d < 50.0 * T_K
+    rho_max = float(0.45 * 6.0 / (np.pi * wda.d**3))
+    print(f"  BH diameter d={wda.d:.4f} Å  rho_max={rho_max:.4f} Å⁻³")
+    print("  Compiling WDA (first call)...", flush=True)
+    _ = wda.c1_bulk(1e-5)
 
-    Vclip_77  = np.clip(vext_flat, -5.0 * T_conv, 5.0 * T_conv)
-    Vclip_298 = np.clip(vext_flat, -5.0 * T_iso,  5.0 * T_iso)
-    print(f"  Vext clipped: "
-          f"{100*(Vclip_77 != vext_flat).mean():.1f}% at T=77K, "
-          f"{100*(Vclip_298 != vext_flat).mean():.1f}% at T=298K")
+    # ── Isotherm: one run per solver ─────────────────────────────────────────
+    isotherms = {}
 
-    # Pressures for isotherm
-    P_iso = np.array([0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0])
+    print(f"\n── Picard isotherm ({len(P_ISO)} pressures) ──")
+    t0 = time.perf_counter()
+    isotherms["Picard"] = run_picard(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
+    print(f"  Total: {time.perf_counter()-t0:.1f}s")
 
-    # ── Exact Henry reference ────────────────────────────────────────────────
-    print("\nHenry reference (exact, c1=0)...", flush=True)
-    N_henry_77  = np.array([henry_exact(vext_flat, T_conv, V_cell, P, mss) for P in P_iso])
-    N_henry_298 = np.array([henry_exact(vext_flat, T_iso,  V_cell, P, mss) for P in P_iso])
-
-    # ── Solver isotherms at T=298K ────────────────────────────────────────────
-    print("Picard (T=298K)...", flush=True)
-    N_picard = solver_isotherm(Vclip_298, dV, V_cell, mss, T_iso, P_iso,
-                               "picard", alpha=0.1, max_iter=600, tol=1e-5)
-
-    print("Anderson (T=298K)...", flush=True)
-    N_anderson = solver_isotherm(Vclip_298, dV, V_cell, mss, T_iso, P_iso,
-                                 "anderson", m=8, beta=0.5, max_iter=300, tol=1e-6)
-
-    N_adam  = None
-    N_fire2 = None
+    print(f"\n── Anderson isotherm ──")
+    t0 = time.perf_counter()
+    isotherms["Anderson"] = run_anderson(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
+    print(f"  Total: {time.perf_counter()-t0:.1f}s")
 
     if OPTAX_AVAILABLE and EQX_AVAILABLE:
-        import optax
-        print("Adam (T=298K)...", flush=True)
-        N_adam = solver_isotherm(Vclip_298, dV, V_cell, mss, T_iso, P_iso,
-                                 "adam", optimizer=optax.adam(2e-3),
-                                 n_steps=3000, tol=1e-6)
-    else:
-        print("  Adam skipped (optax/equinox not available)")
+        print(f"\n── Adam isotherm ──")
+        t0 = time.perf_counter()
+        isotherms["Adam"] = run_adam(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
+        print(f"  Total: {time.perf_counter()-t0:.1f}s")
 
     if OPTX_AVAILABLE:
-        print("FIRE2 (T=298K)...", flush=True)
-        N_fire2 = solver_isotherm(Vclip_298, dV, V_cell, mss, T_iso, P_iso,
-                                  "fire2", rtol=1e-6, atol=1e-8, max_steps=20_000)
-    else:
-        print("  FIRE2 skipped (optimistix not available)")
+        print(f"\n── FIRE2 isotherm ──")
+        t0 = time.perf_counter()
+        isotherms["FIRE2"] = run_fire2(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
+        print(f"  Total: {time.perf_counter()-t0:.1f}s")
 
-    # ── Convergence demo at P=10 bar, T=77K ──────────────────────────────────
-    print("\nConvergence demo at T=77K, P=10 bar...", flush=True)
-    conv = run_convergence_demo(Vclip_77, dV, T_conv, 10.0)
+    # Convert mol/uc → mmol/g
+    def to_mmol_g(N_arr):
+        return N_arr / NA * 1000.0 / mass_frame_g
+
+    # ── Convergence demo ─────────────────────────────────────────────────────
+    print(f"\n── Convergence demo at P={P_CONV} bar, T={T_K} K ──")
+    conv = run_convergence_demo(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
     for name, info in conv.items():
         status = "converged" if info["converged"] else "NOT converged"
-        print(f"  {name:10s}: {info['iters']:4d} iters  {info['time_s']:.2f}s  {status}")
+        print(f"  {name:10s}: {info['iters']:5d} iters  {info['time_s']:.2f}s  {status}")
 
-    # Print loading comparison at P=10 bar, T=298K
-    idx10 = np.argmin(np.abs(P_iso - 10.0))
-    print(f"\n  Loadings at P=10 bar, T=298K (mmol/g):")
-    print(f"    Henry    = {N_henry_298[idx10]:.4f}")
-    print(f"    Picard   = {N_picard[idx10]:.4f}")
-    print(f"    Anderson = {N_anderson[idx10]:.4f}")
-    if N_adam  is not None: print(f"    Adam     = {N_adam[idx10]:.4f}")
-    if N_fire2 is not None: print(f"    FIRE2    = {N_fire2[idx10]:.4f}")
+    # ══════════════════════════════════════════════════════════════════════════
+    # FIGURE 1 — Isotherm comparison
+    # ══════════════════════════════════════════════════════════════════════════
+    COLORS  = {"Picard": "#1f77b4", "Anderson": "#ff7f0e",
+               "Adam": "#2ca02c",  "FIRE2": "#d62728"}
+    MARKERS = {"Picard": "o", "Anderson": "s", "Adam": "^", "FIRE2": "D"}
+    LS      = {"Picard": "-", "Anderson": "-", "Adam": "--", "FIRE2": "--"}
 
-    # ═════════════════════════════════════════════════════════════════════════
-    # FIGURE
-    # ═════════════════════════════════════════════════════════════════════════
-    colors = {"Henry (exact)": "#555555", "Picard": "#1f77b4",
-              "Anderson": "#ff7f0e", "Adam": "#2ca02c", "FIRE2": "#d62728"}
-    markers = {"Henry (exact)": "x", "Picard": "o", "Anderson": "s",
-               "Adam": "^", "FIRE2": "D"}
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for name, N_arr in isotherms.items():
+        mmol = to_mmol_g(N_arr)
+        ax.plot(P_ISO, mmol, color=COLORS[name], ls=LS[name], lw=2,
+                marker=MARKERS[name], ms=6, label=name)
 
-    fig = plt.figure(figsize=(14, 5))
-    gs  = fig.add_gridspec(1, 2, width_ratios=[1.1, 1.0], wspace=0.35)
-    ax_iso = fig.add_subplot(gs[0])
-    ax_cv  = fig.add_subplot(gs[1])
+    ax.set_xlabel("Pressure (bar)", fontsize=12)
+    ax.set_ylabel("H₂ adsorbed (mmol g⁻¹)", fontsize=12)
+    ax.set_title(
+        "COF-333-CoCl₂  H₂ isotherm at 298 K\n"
+        "Morse+LJ V$_\\mathrm{ext}$,  aWBII+WDA functional — solver comparison",
+        fontsize=10)
+    ax.legend(fontsize=10, framealpha=0.85)
+    ax.grid(alpha=0.25)
+    ax.set_xlim(0, P_ISO.max() * 1.05)
+    ax.set_ylim(0, None)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
-    # Panel A — isotherm at T=298K (all solvers + Henry reference)
-    ax_iso.plot(P_iso, N_henry_298, color=colors["Henry (exact)"],
-                ls="--", lw=2.0, label="Henry (exact, c1=0, T=298K)")
-    ax_iso.plot(P_iso, N_henry_77,  color=colors["Henry (exact)"],
-                ls=":", lw=1.5, label="Henry (exact, c1=0, T=77K)")
-    ax_iso.plot(P_iso, N_picard, color=colors["Picard"],
-                lw=2, marker=markers["Picard"], ms=5, label="Picard (T=298K)")
-    ax_iso.plot(P_iso, N_anderson, color=colors["Anderson"],
-                lw=2, marker=markers["Anderson"], ms=5, label="Anderson (T=298K)")
-    if N_adam is not None:
-        ax_iso.plot(P_iso, N_adam, color=colors["Adam"],
-                    lw=2, marker=markers["Adam"], ms=5, label="Adam (T=298K)")
-    if N_fire2 is not None:
-        ax_iso.plot(P_iso, N_fire2, color=colors["FIRE2"],
-                    lw=2, marker=markers["FIRE2"], ms=5, label="FIRE2 (T=298K)")
+    out_iso = os.path.join(FIGURES_DIR, "h2_solver_comparison_isotherm.png")
+    fig.tight_layout()
+    fig.savefig(out_iso, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"\nFigure saved: {out_iso}")
 
-    ax_iso.set_xlabel("Pressure (bar)", fontsize=12)
-    ax_iso.set_ylabel("H₂ adsorbed (mmol g⁻¹)", fontsize=12)
-    ax_iso.set_title(
-        "COF-333-CoCl₂ H₂ isotherm — solver comparison\n"
-        "c1=0 (ideal gas, Henry regime),  Vext capped at ±5T", fontsize=10)
-    ax_iso.legend(fontsize=8.5, framealpha=0.85)
-    ax_iso.grid(alpha=0.25)
-    ax_iso.set_xlim(0, P_iso.max() * 1.05)
-    ax_iso.set_ylim(0, None)
-    ax_iso.spines["top"].set_visible(False)
-    ax_iso.spines["right"].set_visible(False)
+    # ══════════════════════════════════════════════════════════════════════════
+    # FIGURE 2 — Convergence / loss curves
+    # ══════════════════════════════════════════════════════════════════════════
+    n_panels = len(conv)
+    fig, axes = plt.subplots(1, n_panels, figsize=(4.5 * n_panels, 4.2),
+                             sharey=False)
+    if n_panels == 1:
+        axes = [axes]
 
-    # Panel B — convergence at T=77K, P=10 bar
-    for name, info in conv.items():
+    for ax, (name, info) in zip(axes, conv.items()):
         hist = info["history"]
-        if len(hist) <= 1:
-            continue
-        t_s = info["time_s"]
-        lbl = f"{name} ({info['iters']} iters, {t_s:.2f}s)"
-        ax_cv.semilogy(range(1, len(hist) + 1), hist,
-                       color=colors.get(name, "gray"), lw=2, label=lbl)
-
-    ax_cv.set_xlabel("Iteration / step", fontsize=12)
-    ax_cv.set_ylabel("Convergence metric (log scale)", fontsize=12)
-    ax_cv.set_title(
-        "Convergence at T=77 K, P=10 bar  (c1=0)\n"
-        "Picard: ‖Δρ‖/ρ_b;   Anderson: max|F|;   Adam: |ΔΩ|", fontsize=10)
-    ax_cv.legend(fontsize=9, framealpha=0.85)
-    ax_cv.grid(alpha=0.25, which="both")
-    ax_cv.spines["top"].set_visible(False)
-    ax_cv.spines["right"].set_visible(False)
+        xs   = np.arange(1, len(hist) + 1)
+        color = COLORS.get(name, "gray")
+        ax.semilogy(xs, hist, color=color, lw=2)
+        status = "converged" if info["converged"] else "NOT converged"
+        ax.set_title(
+            f"{name}\n{info['iters']} iters  {info['time_s']:.2f}s  [{status}]",
+            fontsize=10)
+        ax.set_xlabel("Iteration / step", fontsize=11)
+        ax.set_ylabel(info["ylabel"], fontsize=11)
+        ax.grid(alpha=0.25, which="both")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
     fig.suptitle(
-        "porecdft solver comparison — H₂/COF-333-CoCl₂  "
-        "(Morse+LJ Vext,  ideal-gas functional,  c1=0)",
+        f"Solver convergence — COF-333-CoCl₂  H₂  T=298 K  P={P_CONV:.0f} bar\n"
+        "Morse+LJ V$_\\mathrm{ext}$,  aWBII+WDA c₁",
         fontsize=11, y=1.02)
-
-    out = os.path.join(FIGURES_DIR, "h2_solver_comparison.png")
-    fig.savefig(out, dpi=150, bbox_inches="tight")
+    fig.tight_layout()
+    out_loss = os.path.join(FIGURES_DIR, "h2_solver_comparison_loss.png")
+    fig.savefig(out_loss, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"\nFigure saved: {out}")
+    print(f"Figure saved: {out_loss}")
 
 
 if __name__ == "__main__":
