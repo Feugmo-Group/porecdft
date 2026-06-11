@@ -30,6 +30,7 @@ from porecdft.eos.peng_robinson import PengRobinsonEOS, H2_PR, N2_PR, CH4_PR
 from porecdft.eos.span_wagner_co2 import SpanWagnerCO2EOS, CO2_SW
 from porecdft.eos.srk import SRKEOS, CO2_SRK, CH4_SRK, N2_SRK
 from porecdft.eos.cpa import CPAEOS, H2O_CPA
+from porecdft.eos.saft_vr_mie import SAFTVRMieEOS, CO2_SAFT_VR_Mie
 
 __all__ = [
     # base + utilities
@@ -67,4 +68,7 @@ __all__ = [
     # CPA
     "CPAEOS",
     "H2O_CPA",
+    # SAFT-VR-Mie
+    "SAFTVRMieEOS",
+    "CO2_SAFT_VR_Mie",
 ]
