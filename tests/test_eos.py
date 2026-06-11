@@ -26,6 +26,8 @@ from porecdft.eos import (
     N2_PR,
     CH4_PR,
     CO2_SW,
+    CO2_SRK,
+    CH4_SRK,
     density_from_pressure,
 )
 from porecdft.eos.base import EOSBase
@@ -64,11 +66,13 @@ EOS_CASES: list[EOSCase] = [
     EOSCase("CH4_PR @ 298K, 1bar", CH4_PR, 1.0, 298.0, rho_ref=2.43e-5, rho_rel_tol=3e-2),
     EOSCase("H2_PR @ 298K, 100bar", H2_PR, 100.0, 298.0),
     EOSCase("H2_PR @ 77K, 1bar", H2_PR, 1.0, 77.0),
-    # Span-Wagner CO2 — near-ideal at 1 bar (NIST ρ ≈ 2.46e-5 molecules/Å³
-    # at 298 K, 1 bar; ideal-gas value 2.43e-5), plus high-pressure round-trip
-    EOSCase("CO2_SW @ 298K, 1bar", CO2_SW, 1.0, 298.0,
-            rho_ref=2.43e-5, rho_rel_tol=2e-2),
+    # Span-Wagner CO2 — near-ideal at 1 bar (NIST ρ ≈ 2.46e-5; ideal 2.43e-5)
+    EOSCase("CO2_SW @ 298K, 1bar", CO2_SW, 1.0, 298.0, rho_ref=2.43e-5, rho_rel_tol=2e-2),
     EOSCase("CO2_SW @ 298K, 50bar", CO2_SW, 50.0, 298.0, p_rel_tol=2e-2),
+    # SRK (Phase 1.1)
+    EOSCase("CO2_SRK @ 298K, 1bar", CO2_SRK, 1.0, 298.0, rho_ref=2.43e-5, rho_rel_tol=3e-2),
+    EOSCase("CO2_SRK @ 298K, 50bar", CO2_SRK, 50.0, 298.0),
+    EOSCase("CH4_SRK @ 298K, 1bar", CH4_SRK, 1.0, 298.0, rho_ref=2.43e-5, rho_rel_tol=3e-2),
 ]
 
 
