@@ -33,33 +33,39 @@ import jax.numpy as jnp
 from porecdft.eos.lj_mbwr import LJEOS, bh_diameter
 from porecdft.functional.fmt import (
     make_k_grid,
+    lanczos_filter,
     make_fmt_weights_hat,
     compute_weighted_densities,
     compute_c1 as _c1_hs,
     bulk_c1 as _bulk_c1_hs,
 )
-from porecdft.functional.fmt_weights import w3FT, phi1func, phi2func, phi3func
+from porecdft.functional.fmt_weights import (
+    w3FT,
+    phi1func, dphi1dnfunc,
+    phi2func, dphi2dnfunc,
+    phi3func, dphi3dnfunc,
+)
 
 # ψ from Denton & Ashcroft 1991 — minimises bulk EOS error for the WDA sphere
 _PSI = 1.3862
 
 
-def _hs_betamu(rho, sigma: float) -> jnp.ndarray:
-    """Hard-sphere excess chemical potential / kT for the WBI/WDA reference."""
-    n0 = rho
-    n1 = rho * sigma / 2
-    n2 = rho * jnp.pi * sigma**2
+def _hs_betamu(rho, sigma: float, model: str = "aWBII") -> jnp.ndarray:
+    """Hard-sphere excess chemical potential / kT for the WDA reference.
+
+    The model must match the FMT functional used (default ``"aWBII"``).
+    """
     n3 = rho * jnp.pi * sigma**3 / 6
     n3 = jnp.where(n3 >= 1.0, 1.0 - 1e-12, n3)
-    phi1 = phi1func(n3)
-    phi2 = phi2func(n3, model="WBI")
-    phi3 = phi3func(n3, model="WBI")
-    dphi_dn0 = phi1
-    dphi_dn1 = n2 * phi2
-    dphi_dn2 = n1 * phi2 + 3 * n2**2 * phi3
-    dphi_dn3 = (n0 * (1 / (1 - n3))
-                + n1 * n2 * (1 / (1 - n3)**2)
-                + n2**3 * (1 / (12 * jnp.pi * (1 - n3)**3)))
+    n2 = rho * jnp.pi * sigma**2
+    n1 = rho * sigma / 2
+    n0 = rho
+    dphi_dn0 = phi1func(n3)
+    dphi_dn1 = n2 * phi2func(n3, model=model)
+    dphi_dn2 = n1 * phi2func(n3, model=model) + 3 * n2**2 * phi3func(n3, model=model)
+    dphi_dn3 = (n0 * dphi1dnfunc(n3)
+                + n1 * n2 * dphi2dnfunc(n3, model=model)
+                + n2**3  * dphi3dnfunc(n3, model=model))
     return (dphi_dn0
             + dphi_dn1 * sigma / 2
             + dphi_dn2 * jnp.pi * sigma**2
@@ -110,16 +116,20 @@ class LJWDAFunctional:
         key = (shape, dx, dy, dz)
         if key not in self._weight_cache:
             KX, KY, KZ, K = make_k_grid(shape, dx, dy, dz)
-            w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(K, KX, KY, KZ, self.d)
-            # WDA weight: normalised sphere of diameter 2ψd
-            w3_wda = w3FT(K, sigma=self._r_wda)
+            # FMT weights with Lanczos anti-aliasing filter (matches legacy reference)
+            w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(
+                K, KX, KY, KZ, self.d, dx=dx, dy=dy, dz=dz
+            )
+            # WDA weight: normalised sphere of radius ψ·d, also Lanczos-filtered
+            sigma_L = lanczos_filter(KX, KY, KZ, dx, dy, dz)
+            w3_wda = w3FT(K, sigma=self._r_wda) * sigma_L
             w_hat  = w3_wda / (jnp.pi * self._r_wda**3 / 6)
             self._weight_cache[key] = (w2_hat, w3_hat, w2vec_hat, w_hat)
         return self._weight_cache[key]
 
     def _mu_att(self, rhobar):
         """Local attractive chemical potential μ_att = μ_exc_LJ − k_B T · βμ_HS."""
-        return self._ljeos.muexc(rhobar, self.T) - self.T * _hs_betamu(rhobar, self.d)
+        return self._ljeos.muexc(rhobar, self.T) - self.T * _hs_betamu(rhobar, self.d, self.model_hs)
 
     def c1(
         self,

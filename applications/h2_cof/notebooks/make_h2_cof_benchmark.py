@@ -200,7 +200,7 @@ for cif_stem, cof_label, base_metal in COF_LIST:
         print(f"    {metal}: N(1 bar) = {N:.3f} mmol/g  K_H = {kH:.2e}")
 
 # ══════════════════════════════════════════════════════════════════════════
-# 3. Cached COF-333-CoCl2 full-pressure data at 298 K
+# 3. Isotherm data: reference notebook + live cDFT cache
 # ══════════════════════════════════════════════════════════════════════════
 NOTEBOOK_DATA = np.array([
     [  1,   2.02,  0.37, 0.08], [  5,   9.45,  1.71, 0.38],
@@ -212,6 +212,14 @@ NOTEBOOK_DATA = np.array([
     [300, 159.13, 14.21, 6.02], [400, 178.54, 12.80, 6.70],
     [500, 193.83, 11.08, 7.24],
 ])
+
+# Load live cDFT isotherm if available
+_iso_cache = ROOT / "applications/h2_cof/results/isotherm_h2_cof333_298K.npz"
+CDFT_DATA = None
+if _iso_cache.exists():
+    _d = np.load(_iso_cache)
+    CDFT_DATA = {k: _d[k] for k in _d.files}
+    print(f"Loaded live cDFT isotherm ({len(CDFT_DATA['P'])} points) from cache.")
 
 # ══════════════════════════════════════════════════════════════════════════
 # 4. Figure
@@ -236,8 +244,7 @@ for metal in METALS:
 ax_morse.axhline(0, color="gray", lw=0.5, ls="--")
 ax_morse.set_xlabel(r"M$\cdots$H$_2$ separation $r$ (Å)", fontsize=11)
 ax_morse.set_ylabel(r"$V_\mathrm{Morse}(r)$ ($10^3$ K)", fontsize=11)
-ax_morse.set_title("(a) Morse interaction potentials\nPramudya & Mendoza-Cortes 2016",
-                   fontsize=10)
+ax_morse.set_title("(a) Morse interaction potentials", fontsize=10)
 ax_morse.set_xlim(2.0, 7.0)
 ax_morse.set_ylim(-1.5, 2.5)
 ax_morse.legend(fontsize=7.5, loc="upper right", framealpha=0.88)
@@ -263,8 +270,7 @@ ax_bar.set_xticks(x)
 ax_bar.set_xticklabels(METALS, fontsize=11)
 ax_bar.set_xlabel("Metal dopant (MCl$_2$)", fontsize=11)
 ax_bar.set_ylabel(r"H$_2$ adsorbed at 77 K, 1 bar (mmol g$^{-1}$)", fontsize=10)
-ax_bar.set_title("(b) Henry-regime uptake across 4 COFs\n"
-                 "porecdft Morse + LJ (3D cDFT, 77 K, 1 bar)", fontsize=10)
+ax_bar.set_title("(b) Henry-regime uptake across 4 COFs\n(77 K, 1 bar)", fontsize=10)
 ax_bar.grid(axis="y", alpha=0.25)
 ax_bar.legend(title="COF framework", fontsize=8, title_fontsize=8,
               loc="upper right", framealpha=0.88)
@@ -278,38 +284,57 @@ for i, (cif_stem, cof_label, _) in enumerate(COF_LIST):
                     ha="center", va="bottom", fontsize=6, rotation=90)
 
 # ── (c) Full-pressure COF-333-CoCl2 at 298 K ─────────────────────────────
-P_full = NOTEBOOK_DATA[:, 0]
-wt     = NOTEBOOK_DATA[:, 3]
-ex     = NOTEBOOK_DATA[:, 2]
+P_ref = NOTEBOOK_DATA[:, 0]
+wt_ref = NOTEBOOK_DATA[:, 3]
+ex_ref = NOTEBOOK_DATA[:, 2]
 
-l1, = ax_iso.plot(P_full, wt, "o-", color="#d6604d", lw=2.0, ms=5,
-                  label="Gravimetric (wt%)")
+# Reference (notebook)
+l1, = ax_iso.plot(P_ref, wt_ref, "o--", color="#d6604d", lw=1.5, ms=5,
+                  alpha=0.55, label="Reference (notebook)")
+
+# Live cDFT result
+legend_lines = [l1]
+if CDFT_DATA is not None:
+    wt_cdft = CDFT_DATA["wt_pct"]
+    ex_cdft = CDFT_DATA["extra_gL"]
+    P_cdft  = CDFT_DATA["P"]
+    l_cdft, = ax_iso.plot(P_cdft, wt_cdft, "o-", color="#d6604d", lw=2.0, ms=5,
+                          label="porecdft aWBII+WDA (new)")
+    legend_lines.insert(0, l_cdft)
+
 ax_iso.axhline(5.5, color="black", lw=1.0, ls=":", alpha=0.55)
 ax_iso.text(460, 5.70, "DOE 2025\n(5.5 wt%)", fontsize=8, color="black",
             ha="right", va="bottom")
 ax_iso.set_xlabel("Pressure (bar)", fontsize=11)
 ax_iso.set_ylabel("Gravimetric H$_2$ uptake (wt%)", fontsize=11, color="#d6604d")
-ax_iso.set_title("(c) Full-pressure isotherm — COF-333-CoCl$_2$, 298 K\n"
-                 "porecdft Morse + LJ + aWBII + WDA", fontsize=10)
+ax_iso.set_title("(c) Full-pressure isotherm — COF-333-CoCl$_2$, 298 K", fontsize=10)
 ax_iso.set_xlim(0, 520)
 ax_iso.set_ylim(0, None)
 ax_iso.tick_params(axis="y", colors="#d6604d", labelsize=10)
 ax_iso.spines["top"].set_visible(False)
 
 ax2 = ax_iso.twinx()
-l2, = ax2.plot(P_full, ex, "s--", color="#8c564b", lw=1.5, ms=4, alpha=0.85,
-               label=r"Excess (g L$^{-1}$)")
+ax2.plot(P_ref, ex_ref, "s--", color="#8c564b", lw=1.2, ms=4, alpha=0.45)
+if CDFT_DATA is not None:
+    l2, = ax2.plot(P_cdft, ex_cdft, "s-", color="#8c564b", lw=1.5, ms=4, alpha=0.85,
+                   label=r"Excess (g L$^{-1}$)")
+    legend_lines.append(l2)
+else:
+    l2, = ax2.plot(P_ref, ex_ref, "s-", color="#8c564b", lw=1.5, ms=4, alpha=0.85,
+                   label=r"Excess (g L$^{-1}$)")
+    legend_lines.append(l2)
 ax2.set_ylabel(r"Excess H$_2$ uptake (g L$^{-1}$)", fontsize=11, color="#8c564b")
 ax2.tick_params(axis="y", colors="#8c564b", labelsize=10)
-ax2.set_ylim(0, ex.max() * 1.18)
+ax2.set_ylim(0, ex_ref.max() * 1.18)
 ax2.spines["top"].set_visible(False)
-ax_iso.legend([l1, l2], [l1.get_label(), l2.get_label()],
-              loc="lower right", fontsize=9, framealpha=0.85)
+ax_iso.legend(legend_lines, [l.get_label() for l in legend_lines],
+              loc="lower right", fontsize=8, framealpha=0.85)
 
 fig.suptitle(r"H$_2$ adsorption in metalated COFs: porecdft Morse potential benchmark"
              "\n(Pramudya & Mendoza-Cortes 2016 COF series, 5 transition metals)",
-             fontsize=11, fontweight="bold")
+             fontsize=11, fontweight="bold", y=1.02)
 
+plt.tight_layout(rect=[0, 0, 1, 1])
 plt.savefig(OUT, dpi=300, bbox_inches="tight")
 print(f"\nSaved: {OUT}")
 plt.close()

@@ -51,15 +51,38 @@ def make_k_grid(shape: tuple[int, int, int], dx: float, dy: float, dz: float):
     return KX, KY, KZ, K
 
 
-def make_fmt_weights_hat(K, KX, KY, KZ, sigma: float):
+def lanczos_filter(KX, KY, KZ, dx: float, dy: float, dz: float) -> jnp.ndarray:
+    """Lanczos (sinc) anti-aliasing filter matching the legacy DFT code.
+
+    sigma_L(k) = sinc(kx·dx/2π) · sinc(ky·dy/2π) · sinc(kz·dz/2π)
+
+    At k=0: sigma_L=1; at Nyquist: sigma_L≈0.637 per axis.  Applied to all
+    weight functions to suppress grid-discretisation artefacts at high density.
+    """
+    return (jnp.sinc(KX * dx / (2 * jnp.pi))
+            * jnp.sinc(KY * dy / (2 * jnp.pi))
+            * jnp.sinc(KZ * dz / (2 * jnp.pi)))
+
+
+def make_fmt_weights_hat(K, KX, KY, KZ, sigma: float,
+                         dx: float | None = None,
+                         dy: float | None = None,
+                         dz: float | None = None):
     """Build FMT scalar + vector weight functions in Fourier space.
 
     Returns ``(w2_hat, w3_hat, w2vec_hat)`` where w2vec_hat has shape (3, *K).
     The vector weight is w2vec = (∇w3) — purely imaginary in Fourier space.
+
+    If dx/dy/dz are provided, a Lanczos anti-aliasing filter is applied to all
+    weight functions (matching the reference legacy implementation).
     """
     w2_hat = w2FT(K, sigma)
     w3_hat = w3FT(K, sigma)
-    # w2vec(k) = i·k · w3(k) (gradient of volumetric weight)
+    if dx is not None and dy is not None and dz is not None:
+        sigma_L = lanczos_filter(KX, KY, KZ, dx, dy, dz)
+        w2_hat  = w2_hat * sigma_L
+        w3_hat  = w3_hat * sigma_L
+    # w2vec(k) = i·k · w3(k) (gradient of volumetric weight; w3_hat already filtered)
     w2vec_hat = jnp.stack([1j * KX * w3_hat, 1j * KY * w3_hat, 1j * KZ * w3_hat], axis=0)
     return w2_hat, w3_hat, w2vec_hat
 

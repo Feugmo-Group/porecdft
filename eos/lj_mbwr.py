@@ -1,6 +1,13 @@
-"""Lennard-Jones and hard-sphere equations of state via MBWR.
+"""Lennard-Jones equation of state via the Modified Benedict-Webb-Rubin (MBWR) expansion.
 
-Ported from ``_dump/cdft/eos.py`` (Elvis do A. Soares 2023-2024).
+Provides the excess free energy density ``fexc`` and excess chemical potential
+``muexc`` of a Lennard-Jones fluid as functions of number density and temperature,
+using either the Johnson 1993 (``"MBWR"``) or May & Mausbach 2012 (``"NewMBWR"``)
+coefficient sets.  These quantities feed directly into the WDA attractive
+functional in ``porecdft.functional.lj_wda``.
+
+Also provides ``bh_diameter`` — the Barker-Henderson effective hard-sphere
+diameter at a given temperature, which sets the WDA convolution sphere radius.
 
 References
 ----------
