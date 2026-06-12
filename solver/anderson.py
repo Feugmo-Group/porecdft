@@ -51,6 +51,7 @@ def anderson_solve(
     safeguard_alpha: float = 0.05,
     picard_warmup: int = 30,
     step_clip: float = 5.0,               # max |Δlog ρ| per step in any voxel
+    rho_max: float | None = None,         # physical density cap (molecules/Å³)
 ) -> AndersonResult:
     """Anderson-accelerated solver for ρ(r).
 
@@ -58,6 +59,15 @@ def anderson_solve(
     ----------
     rho_init, rho_bulk, Vext_K, temperature_K : see porecdft.solver.picard_solve.
     c1_callable, c1_bulk : c¹ function and bulk reference.
+    rho_max : float, optional
+        Hard upper bound on local density (molecules/Å³).  When given, every
+        voxel's log ρ is clipped to ``min(log_clip_hi, log(rho_max))`` at
+        every iteration.  This is the **physical** way to prevent FMT
+        divergence at deep V_ext wells: with no cap, the residual
+        ``v = -βV + c¹ - c¹_b + log ρ_b`` can push ρ above the hard-sphere
+        close-packing limit, where ``log(1 - n_3)`` overflows to NaN.
+        Recommended: ``rho_max = 0.45 * 6 / (π σ³)`` (45 % packing fraction)
+        for FMT-aWBII with hard-sphere diameter σ.
     m : int
         Anderson history depth. Larger m → faster convergence but more memory
         and risk of ill-conditioned LSQ.
@@ -72,6 +82,14 @@ def anderson_solve(
     log_rho_bulk = float(np.log(rho_bulk + 1e-300))
     log_clip_lo = -log_clip + log_rho_bulk
     log_clip_hi = +log_clip + log_rho_bulk
+    # Apply the physical density cap (if any) on top of the relative log_clip.
+    # Without this, deep V_ext wells (~−50 kJ/mol for CO2 in ALF SC cavities)
+    # produce Boltzmann factors of exp(70) and the relative log_clip = 25-30
+    # allows ρ ~ 10^10·ρ_bulk → η > 1 → FMT log(1 − n_3) overflows to NaN.
+    if rho_max is not None and rho_max > 0:
+        log_rho_max = float(np.log(rho_max))
+        if log_rho_max < log_clip_hi:
+            log_clip_hi = log_rho_max
 
     u = np.log(np.maximum(np.asarray(rho_init, dtype=np.float64), 1e-30))
     # Apply mask immediately so u never starts at a huge negative value that
