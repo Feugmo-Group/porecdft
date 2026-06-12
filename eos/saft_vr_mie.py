@@ -67,6 +67,10 @@ class SAFTVRMieEOS(EOSBase):
     """
 
     name = "SAFT-VR-Mie"
+    #: NumPy-based Newton iteration with Python control flow — not jax.jit-able.
+    #: bulk_density returns Python float → safe to use on GPU as a scalar.
+    JIT_SAFE = False
+    GPU_READY = True
 
     def __init__(
         self,

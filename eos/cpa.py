@@ -39,6 +39,12 @@ from __future__ import annotations
 
 import math
 
+# JIT-safety note: this module uses Python ``math`` + scalar Python control flow
+# in the Newton iteration of :meth:`bulk_density`, so it is **not** wrappable
+# in ``jax.jit``. The returned ``float`` is fully usable as a scalar on GPU at
+# the porecdft architecture level (cDFT calls ``bulk_density`` once per (P, T)
+# state point and uses the scalar density as the bulk reference). A JIT-safe
+# rewrite using ``jax.lax.while_loop`` is deferred to v0.3.
 from porecdft.eos.base import EOSBase
 from porecdft.eos.cubic_utils import (
     R_GAS_J_MOL_K,
@@ -90,6 +96,10 @@ class CPAEOS(EOSBase):
     """
 
     name = "CPA"
+    #: NumPy/math-based Newton iteration — not jax.jit-compatible.
+    #: bulk_density returns Python float → safe to use on GPU as a scalar.
+    JIT_SAFE = False
+    GPU_READY = True
 
     def __init__(
         self,

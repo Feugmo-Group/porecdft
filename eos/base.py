@@ -36,10 +36,26 @@ class EOSBase(ABC):
         Short identifier used in registries and log messages.
     molar_mass : float
         Molar mass in g/mol. Stored for convenience; not used by the engine.
+
+    Class attributes
+    ----------------
+    JIT_SAFE : bool
+        ``True`` if :meth:`bulk_density` and :meth:`pressure` can be wrapped in
+        ``jax.jit`` and used inside a ``jax.vmap`` batch — meaning the EOS uses
+        only JAX-compatible operations (no Python ``float()`` casts of traced
+        values, no Python control-flow that branches on tracers). Set to
+        ``True`` for PR, SRK, PC-SAFT; ``False`` for legacy NumPy-only EOS.
+    GPU_READY : bool
+        Convenience alias for ``JIT_SAFE`` — a JIT-safe EOS automatically runs
+        on whatever device JAX is targeting (CPU / CUDA GPU / TPU). The
+        cDFT engine itself runs on GPU regardless of EOS GPU-readiness because
+        bulk densities are scalars computed once per state point.
     """
 
     name: str = "EOSBase"
     molar_mass: float = 1.0
+    JIT_SAFE: bool = False
+    GPU_READY: bool = False
 
     # ------------------------------------------------------------------ core
     @abstractmethod

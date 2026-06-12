@@ -44,6 +44,10 @@ class SRKEOS(EOSBase):
     """
 
     name = "SRK"
+    #: Same JAX-internal / float-cast story as Peng-Robinson — runs on the
+    #: JAX backend but not currently wrappable in ``jax.jit``.
+    JIT_SAFE = False
+    GPU_READY = True
 
     def __init__(
         self,

@@ -42,6 +42,14 @@ class PengRobinsonEOS(EOSBase):
     """
 
     name = "PR"
+    #: ``bulk_density`` uses ``jnp`` internally so the heavy linear algebra
+    #: runs on the JAX backend (CPU/GPU/TPU). The companion-matrix cubic-root
+    #: solver currently includes ``float()`` casts that prevent wrapping the
+    #: whole function in ``jax.jit``; if a JIT-able variant is needed for
+    #: batched bulk-density evaluation, refactor ``cubic_utils.solve_cubic_gas_root``
+    #: to return a ``jnp`` array and delete the casts.
+    JIT_SAFE = False
+    GPU_READY = True
 
     def __init__(
         self,
