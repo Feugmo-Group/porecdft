@@ -155,13 +155,158 @@ porecdft/
   fluid/        Fluid ABC + CO₂ (EPM2/TraPPE), N₂, CH₄, H₂, generic single-site
   vext/         Fibonacci-sphere orientation sampler + 3D Vext grid builder
                 with on-disk caching
-  eos/          Bulk equations of state (ideal gas; LJ-MBWR; PC-SAFT)
+  eos/          Bulk equations of state — see "Equations of state" below
   functional/   Free-energy functionals: aWBII FMT, Wertheim TPT-1 association,
                 elastic framework penalty
   solver/       Picard iteration, Anderson mixing, FIRE minimiser
   diagnostics/  Binding-site probe, Henry constant, isosteric heat
   plotting/     Standardised diagnostic figures
+  warp_backend/ Optional NVIDIA Warp GPU kernels for 3D hot paths
 ```
+
+---
+
+## What's implemented — full equation reference
+
+This section catalogues every formula coded in `porecdft` so users can map module → physics directly.
+
+### 1. Grand-potential functional (the equation everything else minimises)
+
+```
+Ω[ρ, L] = F_id[ρ] + F_ex[ρ] + ∫ [V_ext(r; L, T) − μ] ρ(r) dr + ½ K_eff (L − L₀)²
+```
+
+* `F_id[ρ] = k_B T ∫ ρ(r) [ln(Λ³ ρ(r)) − 1] dr` — ideal-gas free energy (exact).
+* `F_ex[ρ]` — sum of FMT-aWBII, Wertheim TPT-1, and WDA contributions (below).
+* `V_ext(r; L, T)` — composite, orientation-averaged external potential (below).
+* `½ K_eff (L − L₀)²` — affine-elastic framework penalty; `L` is a global lattice scale.
+
+Self-consistency (Euler–Lagrange):
+```
+ρ(r) = ρ_bulk · exp[−β V_ext(r; L, T) + c⁽¹⁾(r) − c⁽¹⁾_b]
+c⁽¹⁾(r) = −β · δF_ex/δρ(r)
+```
+
+### 2. Composite external potential `V_ext`
+
+`porecdft.forcefield/`.
+
+**Lennard-Jones 12-6** (`forcefield/lj.py`):
+```
+V_LJ(r) = 4 ε_ij [(σ_ij/r)¹² − (σ_ij/r)⁶]
+```
+Lorentz–Berthelot mixing: `σ_ij = (σ_i+σ_j)/2`, `ε_ij = √(ε_i ε_j)`.
+
+**Gaussian-smeared Coulomb** (`forcefield/coulomb.py`):
+```
+V_Coul(r) = (q_i q_j) / (4π ε₀ r) · erf(r / (√2 σ_eff))
+σ_eff² = σ_i² + σ_j²
+```
+Cures `1/r` divergence + FFT grid aliasing. Default `σ_smear = 2.0` Å, 3³ PBC.
+
+**Quadrupole–electric-field-gradient** (`forcefield/quadrupole.py`):
+```
+V_Q-EFG(r, Ω) = −⅓ · Θ_αβ^mol(Ω) · V_αβ^host(r)
+V_αβ^host(r) = ∂²Φ_host / (∂r_α ∂r_β)  (computed via FFT Hessian of smeared Φ_host)
+```
+For CO₂: `Θ_zz = −4.30 × 10⁻²⁶ esu cm²`.
+
+**Morse** (`forcefield/morse.py`) — for transition-metal sites in COFs:
+```
+V_Morse(r) = D_e · [(1 − e^(−α(r − r_e)))² − 1]
+```
+
+### 3. Orientation averaging — the rotational free energy
+
+`vext/builder.py`. For polyatomic adsorbates with body-frame site positions `{s_α}`:
+```
+V_ext(r; T) = −k_B T · ln [ (1/N_Ω) Σ_i exp(−β Σ_α V_α(r + R(Ω_i) s_α)) ]
+```
+The result is a **rotational free energy**, not a bare potential. Orientations `{Ω_i}` sampled by **Fibonacci-sphere quadrature** on SO(3) with `N_Ω = 20`. Cached as `.npy`; reused across all `(P, T)` points.
+
+### 4. Free-energy functionals (`functional/`)
+
+**FMT-aWBII** (`functional/fmt.py`) — Hansen-Goos & Roth (2006):
+```
+F_ex^aWBII = k_B T · ∫ Φ^aWBII(n_α(r)) dr
+n_α(r)    = ∫ ρ(r′) ω^α(r − r′) dr′,   α ∈ {0, 1, 2, 3, V1, V2}
+```
+Six weight functions ω^α (scalar + vector). FFT convolutions under periodic boundary conditions; **Lanczos anti-aliasing** filter applied to FFT weights (stabilises the BH-small / coarse-grid limit).
+
+**WDA attractive `c⁽¹⁾`** (`functional/lj_wda.py`) — Weighted-Density Approximation for the long-range LJ/Morse tail.
+
+**Wertheim TPT-1 association** (`functional/association.py`) — Henderson 2021:
+```
+F_assoc[ρ] = n_SC · ∫ ρ(r) [ln X(r) − X(r)/2 + ½] dr
+X(r) = (−1 + √(1 + 4 ρ κ exp(ε_assoc/T))) / (2 ρ κ exp(ε_assoc/T))
+```
+For CO₂/ALF: `n_SC = 7`, `κ = 119` Å³, `ε_assoc = 400 K` (= DFT SC–LC binding-energy difference).
+
+**Elastic framework response** (`functional/elastic.py`):
+```
+Ω_tot(L; ρ) = Ω[ρ; V_ext(r; L)] + ½ K_eff (L − L₀)²
+```
+Reduction of the formal `F_tot[ρ, u] = F_fluid + F_elastic` framework to a single affine
+parameter `u(r) = (L/L₀ − 1) r`. For CO₂/ALF: `K_eff = 0.7 GPa` (~20× softer than bulk).
+Iterative ρ ↔ L loop:
+1. Fix `L` → rebuild `V_ext(r; L)` on strained grid.
+2. Solve Euler–Lagrange for `ρ(r)`.
+3. Compute strain `f(L) = −∂_L ∫ V_ext(r; L) ρ(r) dr`.
+4. Update `L` via `K_eff (L − L₀) = f(L)`. Repeat until `|ΔL| < ε`.
+
+### 5. Solvers (`solver/`)
+
+**Picard fixed-point** (log-density variant prevents `n_3 > 1` overshoots):
+```
+ρ_{k+1} = (1 − α) ρ_k + α · T[ρ_k]
+ln ρ_{k+1} = ln ρ_k + α · (ln T[ρ_k] − ln ρ_k)
+```
+Default `α = 0.02` with pressure continuation (warm-start from previous (P, T)).
+
+**Anderson acceleration**:
+```
+ρ_{k+1} = ρ_k + β · Σ_{j=0}^{m−1} c_j · g_{k−j},     g_k = T[ρ_k] − ρ_k
+min Σ c_j g_{k−j} ²  s.t.  Σ c_j = 1
+```
+Defaults: history depth `m = 8`, damping `β = 0.1`, safeguard fallback to Picard at α=0.01 if residual rises.
+
+**Adam (optax)**: Minimises `Ω[ρ]` by gradient descent. Gradient `∇_ρ Ω` from JAX autodiff. lr = 2e-3, 5000 steps. Reparametrise `ρ = ρ_b · exp(η(r))` to enforce positivity.
+
+**FIRE2 / NonlinearCG (optimistix)**: Inertial relaxation. JIT-compiled in JAX, runs on CPU or GPU. Fastest per iteration on the correct basin.
+
+### 6. Bulk equations of state (`eos/`) — v0.2
+
+`bulk_density(P_bar, T_K) → molecules/Å³` (gas branch).
+
+| Class | Physics | When to use | JIT_SAFE |
+|-------|---------|-------------|----------|
+| `density_from_pressure` | Ideal gas: `ρ = P/(k_B T)` | low-P / high-T limit | ✅ |
+| `PengRobinsonEOS` | Cubic, Peng-Robinson 1976: `P = RT/(V−b) − a(T)/(V²+2bV−b²)` | H₂ 0–500 bar, light gases | runs on JAX |
+| `SRKEOS` | Cubic, Soave 1972: `P = RT/(V−b) − a(T)/(V(V+b))` with `κ_SRK(ω) = 0.480 + 1.574ω − 0.176ω²` | hydrocarbons VLE | runs on JAX |
+| `SpanWagnerCO2EOS` | Reference Helmholtz: `α^r(δ,τ) = Σ N_i δ^d_i τ^t_i` (7-term truncation of S&W 1996 Table 31) | CO₂ near critical | **✅ jax.jit-able** |
+| `PCSAFTEOS` | Gross & Sadowski 2001: `ã^res = ã^hc + ã^disp`, `Z = 1 + ρ ∂ã^res/∂ρ` (autodiff) | mixtures, chains | runs on JAX |
+| `CPAEOS` | SRK + Wertheim TPT-1: `P = P_SRK + P_assoc`, `X = 2/(1+√(1+8ρΔ))` for 4C scheme | water, alcohols, amines | NumPy |
+| `SAFTVRMieEOS` | Carnahan-Starling HS + leading-order Mie dispersion (Lafitte 2013, simplified) | CO₂ alternative | NumPy |
+| `LJEOS` (MBWR) | Modified Benedict-Webb-Rubin for Lennard-Jones (Johnson 1993) | FMT-bulk-limit consistency check | NumPy |
+| `FeynmanHibbsEOS` | Quantum-corrected wrapper: `ρ_FH(P, T) = ρ_classical · f_Q(T)`, `f_Q = 1/(1 + Λ*²/12)`, `Λ* = h/(σ √(2π m k_B T))` | cryogenic H₂ (77 K) | NumPy float64 |
+
+All EOS subclass `EOSBase` and expose `JIT_SAFE` / `GPU_READY` class attributes.
+
+### 7. NVIDIA Warp GPU kernels (`warp_backend/`)
+
+Optional GPU acceleration of the three biggest 3D hot paths. All kernels degrade gracefully when `warp-lang` is not installed.
+
+| Kernel | Purpose | Replaces |
+|--------|---------|----------|
+| `rho_bar_sphere_kernel` | Wertheim ρ̄_s = (1/κ_s) ∫_{ \|r−r_s\| < r_κ} ρ(r) dV for all M sites in parallel; one thread per voxel, atomic-add per site | `WertheimAssociation._rho_bar_all` Python loop (O(M × N_g)) |
+| `lj_vext_grid_kernel` | LJ V_ext on (N_g,) grid for one orientation, multi-site fluid: `Σ_{s,a} 4 ε_ij[(σ_ij/r)¹² − (σ_ij/r)⁶]` | `LJPotential.energy_grid` per-orientation Python loop |
+| `morse_vext_grid_kernel` | Morse-well V for transition-metal sites: `D_e[(1−e^(−α(r−r_e)))²−1]` (with `D_e` cap below) | `MorsePotential.energy_grid` per-orientation loop |
+| `smeared_coulomb_grid_kernel` | erf-smeared Coulomb per (S, N_a) pair: `q_i q_j / r · erf(r/(√2 σ_eff)) · k_e e²/k_B` | `CoulombPotential.energy_grid` per-orientation loop |
+| `boltzmann_orient_avg_kernel` | Final orientation reduction `V(r;T) = −k_B T ln (1/N_Ω Σ_i exp(−β V_i))` with min-shift LSE | NumPy reduction in `vext/builder.py` |
+
+Each Vext kernel does **one orientation per launch**; the outer 20-orientation loop becomes 20 kernel launches. Per-thread work: 1 voxel × N_sites × N_atoms inner-loop with cutoff masking. Expected speedup on CUDA: **10–100× per orientation** over NumPy `energy_grid`; cuts `build_vext_on_grid` from minutes to seconds.
+
+Python wrappers `lj_vext_grid_warp` and `boltzmann_orient_avg_warp` include a CPU fallback for correctness testing (`tests/test_vext_warp.py`).
 
 ---
 
