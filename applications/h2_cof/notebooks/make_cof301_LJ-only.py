@@ -1,0 +1,4 @@
+"""H2 cDFT — COF-301-CoCl2, LJ-only (no Morse), 298 K, 0-700 bar."""
+from _h2cof_runner import run_isotherm
+if __name__ == "__main__":
+    run_isotherm("COF-301-CoCl2", mode="LJ-only")
