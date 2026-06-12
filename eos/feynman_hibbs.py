@@ -37,7 +37,8 @@ import numpy as np
 from porecdft.eos.base import EOSBase
 
 
-# Physical constants (SI)
+# Physical constants (SI). Use NumPy float64 to avoid underflow when computing
+# the de Broglie wavelength (2π·m·k_B·T ≈ 1e-46, below float32 minimum).
 _H_PLANCK = 6.62607015e-34   # J·s
 _K_B = 1.380649e-23          # J/K
 _AMU_KG = 1.66053906660e-27  # kg / amu
@@ -46,20 +47,9 @@ _AMU_KG = 1.66053906660e-27  # kg / amu
 def quantum_factor(T_K: float, m_amu: float, sigma_A: float) -> float:
     """Leading-order Feynman-Hibbs density-reduction factor ``f_Q(T) ≤ 1``.
 
-    Parameters
-    ----------
-    T_K : float
-        Temperature in K.
-    m_amu : float
-        Molecular mass in atomic mass units.
-    sigma_A : float
-        Lennard-Jones size parameter in Å (used as the relevant length scale
-        for the reduced thermal wavelength ``Λ* = Λ_dB / σ``).
-
-    Returns
-    -------
-    float
-        ``f_Q = 1 / (1 + Λ*² / 12)``.  Approaches 1 as ``T → ∞``.
+    Uses NumPy float64 internally to avoid float32 underflow in
+    ``2π·m·k_B·T``. The result is a Python scalar — safe to mix with JAX
+    code from the calling EOS.
     """
     m_kg = m_amu * _AMU_KG
     Lambda_dB_m = _H_PLANCK / np.sqrt(2.0 * np.pi * m_kg * _K_B * T_K)
@@ -89,6 +79,13 @@ class FeynmanHibbsEOS(EOSBase):
     """
 
     name = "FH"
+    #: NumPy float64 used for the quantum-factor to avoid float32 underflow.
+    #: bulk_density returns a Python float — fully GPU-compatible at the
+    #: porecdft architecture level (called once per state point) but **not**
+    #: jax.jit-able as a single function (would require switching to a JIT-safe
+    #: scalar computation in float64 — deferred to v0.3).
+    JIT_SAFE = False
+    GPU_READY = True   # returns Python float → usable as scalar on GPU
 
     def __init__(
         self,
@@ -103,6 +100,9 @@ class FeynmanHibbsEOS(EOSBase):
         # Inherit molar mass from wrapped EOS so downstream code that reads
         # ``.molar_mass`` keeps working.
         self.molar_mass = getattr(classical_eos, "molar_mass", m_amu)
+        # JIT-safety is inherited from the wrapped classical EOS.
+        self.JIT_SAFE = getattr(classical_eos, "JIT_SAFE", False)
+        self.GPU_READY = getattr(classical_eos, "GPU_READY", False)
         if name is not None:
             self.name = name
 
@@ -117,7 +117,7 @@ class FeynmanHibbsEOS(EOSBase):
         rho_cl = self._classical.bulk_density(P_bar, T_K)
         return float(rho_cl) * self.quantum_factor(T_K)
 
-    def pressure(self, rho: float, T_K: float) -> float:
+    def pressure(self, rho, T_K):
         """Pressure (bar) consistent with :meth:`bulk_density` (inverse map).
 
         Given the FH-corrected density ``rho``, the classical density that

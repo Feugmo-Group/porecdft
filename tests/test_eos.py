@@ -123,3 +123,23 @@ def test_eos_reference_density(case: EOSCase):
         pytest.skip("no reference density specified for this case")
     rho = case.eos.bulk_density(case.P_bar, case.T_K)
     assert rho == pytest.approx(case.rho_ref, rel=case.rho_rel_tol)
+
+
+# ─── GPU-compat: JIT-safety check for EOS that declare JIT_SAFE = True ──────
+
+@pytest.mark.parametrize("case", EOS_CASES, ids=lambda c: c.name)
+def test_eos_jit_safe(case: EOSCase):
+    """If the EOS declares ``JIT_SAFE = True`` then ``jax.jit(bulk_density)``
+    must produce a finite, positive density matching the unwrapped call."""
+    if not getattr(case.eos, "JIT_SAFE", False):
+        pytest.skip(f"{case.name}: EOS declares JIT_SAFE = False")
+    try:
+        import jax
+    except ImportError:
+        pytest.skip("jax not installed")
+    rho_plain = case.eos.bulk_density(case.P_bar, case.T_K)
+    jitted = jax.jit(case.eos.bulk_density, static_argnums=())
+    rho_jit = jitted(case.P_bar, case.T_K)
+    rho_jit = float(rho_jit)
+    assert rho_jit > 0
+    assert rho_jit == pytest.approx(rho_plain, rel=1e-3)

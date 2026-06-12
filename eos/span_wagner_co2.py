@@ -25,13 +25,13 @@ Span, R.; Wagner, W. *J. Phys. Chem. Ref. Data* **1996**, *25*, 1509.
 """
 from __future__ import annotations
 
-import numpy as np
+import jax.numpy as jnp
 
 from porecdft.eos.base import EOSBase
 from porecdft.eos.ideal_gas import K_B_J_PER_K, BAR_PA, ANGSTROM3_M3
 
 # ─── Span-Wagner 1996 Table 31 — first 7 polynomial residual terms ────────
-_N = np.array([
+_N = jnp.array([
     0.388568232032e00,
     0.293854759427e01,
     -0.558671885349e01,
@@ -40,23 +40,23 @@ _N = np.array([
     0.548033158978e00,
     0.122794112203e00,
 ])
-_D = np.array([1, 1, 1, 1, 2, 2, 3])
-_T_EXP = np.array([0.00, 0.75, 1.00, 2.00, 0.75, 2.00, 0.75])
+_D = jnp.array([1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 3.0])
+_T_EXP = jnp.array([0.00, 0.75, 1.00, 2.00, 0.75, 2.00, 0.75])
 
 
-def _alpha_r(delta: float, tau: float) -> float:
+def _alpha_r(delta, tau):
     """Residual Helmholtz energy α^r(δ, τ) — truncated polynomial form."""
-    return float(np.sum(_N * delta ** _D * tau ** _T_EXP))
+    return jnp.sum(_N * delta ** _D * tau ** _T_EXP)
 
 
-def _d_alpha_r_d_delta(delta: float, tau: float) -> float:
+def _d_alpha_r_d_delta(delta, tau):
     """∂α^r/∂δ at fixed τ."""
-    return float(np.sum(_N * _D * delta ** (_D - 1) * tau ** _T_EXP))
+    return jnp.sum(_N * _D * delta ** (_D - 1) * tau ** _T_EXP)
 
 
-def _d2_alpha_r_d_delta2(delta: float, tau: float) -> float:
+def _d2_alpha_r_d_delta2(delta, tau):
     """∂²α^r/∂δ² at fixed τ — needed for Newton iteration."""
-    return float(np.sum(_N * _D * (_D - 1) * delta ** (_D - 2) * tau ** _T_EXP))
+    return jnp.sum(_N * _D * (_D - 1) * delta ** (_D - 2) * tau ** _T_EXP)
 
 
 class SpanWagnerCO2EOS(EOSBase):
@@ -77,6 +77,11 @@ class SpanWagnerCO2EOS(EOSBase):
     """
 
     name = "SpanWagner_CO2"
+    #: Newton iteration uses ``jax.lax.fori_loop`` and ``jnp.where`` for
+    #: control flow — fully JIT-safe. ``pressure`` and ``bulk_density`` can
+    #: both be wrapped in ``jax.jit`` / ``jax.vmap`` for batched evaluation.
+    JIT_SAFE = True
+    GPU_READY = True
     Tc = 304.1282
     Pc = 73.773e5      # Pa
     rho_c = 467.6       # kg/m³
@@ -94,50 +99,45 @@ class SpanWagnerCO2EOS(EOSBase):
         tau = self.Tc / T_K
         return 1.0 + delta * _d_alpha_r_d_delta(delta, tau)
 
-    def pressure(self, rho: float, T_K: float) -> float:
+    def pressure(self, rho, T_K):
         """Pressure in bar for number density ``rho`` (molecules/Å³) at *T* (K)."""
         Z = self._Z(rho, T_K)
         # P [Pa] = ρ [molecules/m³] · k_B · T · Z
         rho_SI = rho / ANGSTROM3_M3  # molecules / m³
         P_Pa = rho_SI * K_B_J_PER_K * T_K * Z
-        return float(P_Pa / BAR_PA)
+        return P_Pa / BAR_PA
 
-    def bulk_density(self, P_bar: float, T_K: float) -> float:
+    def bulk_density(self, P_bar, T_K):
         """Number density (molecules/Å³) at *P* (bar) and *T* (K), gas branch.
 
         Newton iteration on δ to satisfy ``P / (ρ k_B T) = Z(ρ, T)``, starting
-        from the ideal-gas density.
+        from the ideal-gas density. Uses ``jax.lax.fori_loop`` so the routine
+        is JIT-safe and runs on GPU under ``jax.jit`` / ``jax.vmap``.
         """
+        from jax import lax  # local import keeps top-level imports light
+
         P_Pa = P_bar * BAR_PA
         # Ideal-gas seed: ρ = P / (k_B T) in molecules/m³, convert to /Å³.
         rho_ideal = P_Pa / (K_B_J_PER_K * T_K) * ANGSTROM3_M3
-        delta = rho_ideal / self.rho_c_num
         tau = self.Tc / T_K
-
-        # Target: f(δ) = P_Pa - ρ k_B T · Z(δ, τ) = 0
-        # where ρ = δ · ρ_c_num  (molecules/Å³).
         kT = K_B_J_PER_K * T_K
         rho_c_SI = self.rho_c_num / ANGSTROM3_M3  # molecules/m³
 
-        for _ in range(80):
+        def newton_step(_, delta):
             dadd = _d_alpha_r_d_delta(delta, tau)
             d2add = _d2_alpha_r_d_delta2(delta, tau)
             Z = 1.0 + delta * dadd
             f = P_Pa - delta * rho_c_SI * kT * Z
-            # dZ/dδ = dadd + δ · d²α^r/dδ²
             dZ_dd = dadd + delta * d2add
-            # df/dδ = -ρ_c_SI · kT · (Z + δ · dZ/dδ)
             df = -rho_c_SI * kT * (Z + delta * dZ_dd)
             step = f / df
             delta_new = delta - step
-            if delta_new <= 0:
-                delta_new = 0.5 * delta  # safeguard against overshoot
-            if abs(delta_new - delta) < 1e-14 * max(delta, 1e-30):
-                delta = delta_new
-                break
-            delta = delta_new
+            # Guard against negative δ (use jnp.where for JIT-safety)
+            return jnp.where(delta_new <= 0, 0.5 * delta, delta_new)
 
-        return float(delta * self.rho_c_num)
+        delta0 = rho_ideal / self.rho_c_num
+        delta = lax.fori_loop(0, 80, newton_step, delta0)
+        return delta * self.rho_c_num
 
 
 # ─── Pre-built singleton ──────────────────────────────────────────────────
