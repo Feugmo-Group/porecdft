@@ -44,9 +44,27 @@ dependencies = [
 jax = [
   "jax>=0.4",
   "jaxlib>=0.4",
+  "equinox>=0.13.8",
+]
+optim = [
+  "porecdft[jax]",
+  "optax>=0.2",
+  "optimistix>=0.0.10",
+]
+warp = [
+  "warp-lang>=1.4",
+]
+gpu = [
+  "porecdft[optim]",
+  "warp-lang>=1.4",
 ]
 all = [
-  "porecdft[jax]",
+  "porecdft[gpu]",
+]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov",
+  "ruff",
 ]
 dev = [
   "pytest>=7.0",
@@ -68,6 +86,12 @@ Issues = "https://github.com/Feugmo-Group/porecdft/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
+
+[tool.hatch.build.targets.editable]
+# strict mode: installs an import hook that maps `porecdft` → project root,
+# instead of adding the project root itself to sys.path (which would require
+# a porecdft/ subdirectory to exist).
+mode = "strict"
 exclude = [
   "graphify-out/",
   "__pycache__/",
