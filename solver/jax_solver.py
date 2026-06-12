@@ -224,22 +224,37 @@ def _make_solver_class():
             error_history: list[float] = []
             prev_omega = float("inf")
             converged = False
+            # Relative tolerance on Ω AND a minimum-iteration floor so the
+            # solver never stops on float-precision noise alone (the absolute
+            # check used previously tripped on |ΔΩ| < 1e-5 at high pressure,
+            # where Ω ~ 10^6 and 1e-5 / 10^6 = 1e-11 is at float32 precision).
+            # We additionally require a *streak* of small steps to filter
+            # one-off noise blips before declaring convergence.
+            min_iters = max(200, int(0.05 * self.n_steps))
+            small_step_streak_needed = 5
+            small_step_streak = 0
 
             for i in range(self.n_steps):
                 log_rho, opt_state, omega_val = step(log_rho, opt_state)
                 omega_f = float(omega_val)
                 delta = abs(omega_f - prev_omega)
+                rel_delta = delta / max(abs(omega_f), 1.0)
                 omega_history.append(omega_f)
-                error_history.append(delta)
+                error_history.append(rel_delta)
 
                 if self.print_every > 0 and (
                     i % self.print_every == 0 or i == self.n_steps - 1
                 ):
-                    print(f"  step {i:4d}  Ω = {omega_f:.6g}  |ΔΩ| = {delta:.2e}")
+                    print(f"  step {i:4d}  Ω = {omega_f:.6g}  "
+                          f"|ΔΩ|/|Ω| = {rel_delta:.2e}")
 
-                if delta < self.tol and i > 0:
-                    converged = True
-                    break
+                if i >= min_iters and rel_delta < self.tol:
+                    small_step_streak += 1
+                    if small_step_streak >= small_step_streak_needed:
+                        converged = True
+                        break
+                else:
+                    small_step_streak = 0
                 prev_omega = omega_f
 
             rho_final = np.asarray(jnp.exp(log_rho))
