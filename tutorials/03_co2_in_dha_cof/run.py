@@ -75,7 +75,7 @@ def main():
         potential = CompositePotential([
             LJPotential(host_ff=host_ff, fluid_ff=fluid.ff, cutoff=15.0),
             CoulombPotential(fluid_charges=fluid.charges,
-                             sigma_smear=2.0, cutoff=15.0),
+                             method="smeared", gauss_width=2.0, cutoff=15.0),
             QuadrupoleEFGPotential(theta_zz=fluid.theta_zz, cutoff=15.0),
         ])
         print("Building Vext (LJ + smeared Coulomb + Q-EFG)...")

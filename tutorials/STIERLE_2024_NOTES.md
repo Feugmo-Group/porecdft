@@ -140,3 +140,25 @@ unified bulk-μ helper for PC-SAFT chains.  We could add this to
 
 The **top three for immediate porting** are `rfftn` + multi-component
 density + triclinic, in that order.
+
+---
+
+## Status — top-3 ideas landed (2026-06-12)
+
+All three high-priority items are merged into `porecdft/functional/fmt.py`:
+
+1. **rfftn / irfftn path** — `make_k_grid(..., real_fft=True)` builds the half-domain
+   k-grid; `compute_weighted_densities(..., real_fft=True)` and
+   `compute_c1(..., real_fft=True)` accept the matching weights and run on
+   `rfftn` / `irfftn`.  Backward-compatible (default `real_fft=False`).  Parity
+   verified vs the full-FFT path (Δn3 ≈ 5e-8 float32 noise).
+2. **Multi-component additive-mixture FMT** — new helpers
+   `make_fmt_weights_hat_multi`, `compute_weighted_densities_multi`,
+   `compute_c1_multi` exported from `porecdft.functional`.  Accept
+   `rho[c, x, y, z]` + list of σ_c, return summed n_α and per-component c¹_HS.
+   Verified: zeroing the second species reproduces the single-component path exactly.
+3. **Triclinic skew_angles** — `make_k_grid(..., skew_angles=(α, β, γ))` applies
+   the Stierle 2024 `_skewed2cart` transformation to the k-grid.  Default
+   `None` keeps orthorhombic behaviour; 90° explicit pass-through reproduces
+   the default to 1e-6.  Note: callers must also rescale `dV` by the cell
+   Jacobian for non-orthorhombic cells.
