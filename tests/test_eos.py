@@ -30,6 +30,8 @@ from porecdft.eos import (
     CH4_SRK,
     H2O_CPA,
     CO2_SAFT_VR_Mie,
+    CO2_PCSAFT,
+    N2_PCSAFT,
     H2_FH,
     density_from_pressure,
 )
@@ -83,6 +85,12 @@ EOS_CASES: list[EOSCase] = [
     EOSCase("CO2_SAFT_VR_Mie @ 298K, 1bar", CO2_SAFT_VR_Mie, 1.0, 298.0,
             rho_ref=2.43e-5, rho_rel_tol=5e-2),
     EOSCase("CO2_SAFT_VR_Mie @ 298K, 10bar", CO2_SAFT_VR_Mie, 10.0, 298.0),
+    # PC-SAFT (Gross & Sadowski 2001)
+    EOSCase("CO2_PCSAFT @ 298K, 1bar", CO2_PCSAFT, 1.0, 298.0,
+            rho_ref=2.43e-5, rho_rel_tol=3e-2),
+    EOSCase("CO2_PCSAFT @ 298K, 50bar", CO2_PCSAFT, 50.0, 298.0, p_rel_tol=3e-2),
+    EOSCase("N2_PCSAFT @ 298K, 1bar", N2_PCSAFT, 1.0, 298.0,
+            rho_ref=2.43e-5, rho_rel_tol=3e-2),
     # Feynman-Hibbs quantum-corrected H2 (wraps H2_PR)
     EOSCase("H2_FH @ 298K, 1bar", H2_FH, 1.0, 298.0, rho_ref=2.43e-5, rho_rel_tol=2e-2),
     EOSCase("H2_FH @ 77K, 1bar", H2_FH, 1.0, 77.0),
