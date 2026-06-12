@@ -31,6 +31,7 @@ from porecdft.eos.span_wagner_co2 import SpanWagnerCO2EOS, CO2_SW
 from porecdft.eos.srk import SRKEOS, CO2_SRK, CH4_SRK, N2_SRK
 from porecdft.eos.cpa import CPAEOS, H2O_CPA
 from porecdft.eos.saft_vr_mie import SAFTVRMieEOS, CO2_SAFT_VR_Mie
+from porecdft.eos.pc_saft import PCSAFTEOS, CO2_PCSAFT, N2_PCSAFT, CH4_PCSAFT
 from porecdft.eos.feynman_hibbs import FeynmanHibbsEOS, H2_FH
 
 __all__ = [
@@ -72,6 +73,11 @@ __all__ = [
     # SAFT-VR-Mie
     "SAFTVRMieEOS",
     "CO2_SAFT_VR_Mie",
+    # PC-SAFT
+    "PCSAFTEOS",
+    "CO2_PCSAFT",
+    "N2_PCSAFT",
+    "CH4_PCSAFT",
     # Feynman-Hibbs quantum-corrected wrapper
     "FeynmanHibbsEOS",
     "H2_FH",
