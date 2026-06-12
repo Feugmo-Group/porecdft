@@ -76,7 +76,8 @@ def single_gas_isotherm(fluid, eos, sigma_hs, host, host_ff, name, P_arr,
         has_q = any(abs(q) > 0 for q in fluid.charges.values()) if use_charges else False
         if has_q:
             pots.append(CoulombPotential(fluid_charges=fluid.charges,
-                                         sigma_smear=2.0, cutoff=15.0))
+                                         method="smeared", gauss_width=2.0,
+                                         cutoff=15.0))
             if hasattr(fluid, "theta_zz") and abs(fluid.theta_zz) > 0:
                 pots.append(QuadrupoleEFGPotential(theta_zz=fluid.theta_zz,
                                                     cutoff=15.0))
