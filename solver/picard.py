@@ -35,6 +35,7 @@ def picard_solve(
     tol: float = 1e-4,
     accessibility_mask: np.ndarray | None = None,
     log_clip: float = 50.0,
+    rho_max: float | None = None,         # physical density cap (molecules/Å³)
 ) -> PicardResult:
     """Picard iteration for ρ(r).
 
@@ -62,6 +63,12 @@ def picard_solve(
         If given, ρ is forced to 0 outside the mask.
     log_clip : float
         Clip |β V + c¹ − c¹_bulk| at ±log_clip to keep exp() finite.
+    rho_max : float, optional
+        Hard upper bound on local density (molecules/Å³).  Without this, deep
+        V_ext wells produce Boltzmann factors that the relative log_clip
+        allows to push ρ above the hard-sphere close-packing limit
+        (η > 1 → FMT log(1 − n_3) overflows to NaN).  Recommended:
+        ``rho_max = 0.45 · 6 / (π σ³)`` for FMT-aWBII with hard-sphere σ.
     """
     beta = 1.0 / temperature_K
     rho = np.asarray(rho_init, dtype=np.float64).copy()
@@ -70,12 +77,18 @@ def picard_solve(
     last_err = np.inf
 
     log_rho_bulk = np.log(rho_bulk + 1e-300)
+    log_rho_hi   = +log_clip + log_rho_bulk
+    log_rho_lo   = -log_clip + log_rho_bulk
+    if rho_max is not None and rho_max > 0:
+        log_rho_max = float(np.log(rho_max))
+        if log_rho_max < log_rho_hi:
+            log_rho_hi = log_rho_max
     log_rho = np.log(np.maximum(rho, 1e-30))
     for it in range(max_iter):
         c1 = np.asarray(c1_callable(np.exp(log_rho)))
         # Target in log space — exact Picard step
         log_rho_target = -beta * Vext_K + c1 - c1_bulk + log_rho_bulk
-        log_rho_target = np.clip(log_rho_target, -log_clip + log_rho_bulk, +log_clip + log_rho_bulk)
+        log_rho_target = np.clip(log_rho_target, log_rho_lo, log_rho_hi)
         # Log-space mixing (stable even with huge swings in log_rho_target)
         log_rho_new = (1.0 - alpha) * log_rho + alpha * log_rho_target
         if accessibility_mask is not None:
