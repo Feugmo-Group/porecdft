@@ -202,7 +202,7 @@ for cif_stem, cof_label, base_metal in COF_LIST:
 # ══════════════════════════════════════════════════════════════════════════
 # 3. Isotherm data: live cDFT cache only
 # ══════════════════════════════════════════════════════════════════════════
-_iso_cache = ROOT / "applications/h2_cof/results/isotherm_h2_cof333_298K.npz"
+_iso_cache = ROOT / "applications/h2_cof/results/isotherm_COF-333-CoCl2_298K_0-700bar.npz"
 CDFT_DATA = None
 if _iso_cache.exists():
     _d = np.load(_iso_cache)
@@ -282,12 +282,12 @@ if CDFT_DATA is not None:
     legend_lines.append(l_cdft)
 
 ax_iso.axhline(5.5, color="black", lw=1.0, ls=":", alpha=0.55)
-ax_iso.text(460, 5.70, "DOE 2025\n(5.5 wt%)", fontsize=8, color="black",
+ax_iso.text(660, 5.70, "DOE 2025\n(5.5 wt%)", fontsize=8, color="black",
             ha="right", va="bottom")
 ax_iso.set_xlabel("Pressure (bar)", fontsize=11)
 ax_iso.set_ylabel("Gravimetric H$_2$ uptake (wt%)", fontsize=11, color="#d6604d")
-ax_iso.set_title("(c) Full-pressure isotherm — COF-333-CoCl$_2$, 298 K", fontsize=10)
-ax_iso.set_xlim(0, 520)
+ax_iso.set_title("(c) Full-pressure isotherm — COF-333-CoCl$_2$, 298 K (Morse+LJ, 0–700 bar)", fontsize=10)
+ax_iso.set_xlim(0, 720)
 ax_iso.set_ylim(0, None)
 ax_iso.tick_params(axis="y", colors="#d6604d", labelsize=10)
 ax_iso.spines["top"].set_visible(False)
