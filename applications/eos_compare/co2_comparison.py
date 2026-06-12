@@ -28,6 +28,7 @@ from porecdft.eos import (
     CO2_SW,
     CO2_SRK,
     CO2_SAFT_VR_Mie,
+    CO2_PCSAFT,
 )
 
 # CO2 Peng-Robinson singleton (paper Tc=304.13, Pc=73.77 bar, omega=0.225)
@@ -48,6 +49,7 @@ eos_panel = [
     ("SRK",       lambda P: CO2_SRK.bulk_density(P, T_K), "#ff7f0e", "-"),
     ("Span-Wagner", lambda P: CO2_SW.bulk_density(P, T_K), "#d62728", "-"),
     ("SAFT-VR-Mie", lambda P: CO2_SAFT_VR_Mie.bulk_density(P, T_K), "#2ca02c", "-"),
+    ("PC-SAFT",     lambda P: float(CO2_PCSAFT.bulk_density(P, T_K)), "#9467bd", "-"),
 ]
 
 rho_curves = {}
