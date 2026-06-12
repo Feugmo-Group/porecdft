@@ -88,44 +88,34 @@ TEMPERATURES = [273.0, 298.0]
 
 
 def build_vext(host, fluid, host_ff, n_orient=20, T=298.0):
-    """Reuse cached Vext if present; otherwise build it once and cache."""
-    cache_path = CACHE_ROOT / f"vext_T{T:.0f}.npy"
-    if cache_path.exists():
-        data = np.load(cache_path, allow_pickle=True).item()
-        print(f"  Loaded Vext from cache: {cache_path}", flush=True)
-        return data
-    # not cached → fall back to building it (slow ~30 min)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    print("  Vext cache not found — building (≈30 min)...", flush=True)
-    potential = CompositePotential([
-        LJPotential(host_ff=host_ff, fluid_ff=fluid.ff, cutoff=15.0),
-        CoulombPotential(host_charges=None, fluid_charges=fluid.charges,
-                          sigma_smear=2.0, cutoff=15.0),
-        QuadrupoleEFGPotential(theta_zz=fluid.theta_zz, cutoff=15.0),
-    ])
-    host_super = build_supercell(host, 3, 3, 3)
-    from dataclasses import replace
-    host_super = replace(host_super,
-                         positions=host_super.positions
-                         - host.lattice[0] - host.lattice[1] - host.lattice[2])
-    vd = build_vext_on_grid(
-        host_super, fluid, potential,
-        orientations=fibonacci_rotations(n_orient),
-        spacing=0.7, temperature_K=T,
-        cache_path=str(cache_path),
-    )
-    return vd
+    """Reuse the existing phase-2 Vext cache.  Available T = 273, 298, 323 K."""
+    cache_path = CACHE_ROOT / f"vext_avg_T{int(T)}K.npy"
+    if not cache_path.exists():
+        raise FileNotFoundError(
+            f"Vext cache not found: {cache_path}\n"
+            "Build it first by running:\n"
+            "    /opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/python \\\n"
+            "        applications/alf_co2/notebooks/phase2_2_fmt_isotherm.py\n"
+            "(builds the EPM2 + smeared-Coulomb + Q-EFG Vext for T = 273/298/323 K)."
+        )
+    data = np.load(cache_path, allow_pickle=True).item()
+    print(f"  Loaded Vext from cache: {cache_path}", flush=True)
+    return data
 
 
 # ── isotherm at one (T, EOS) ────────────────────────────────────────────────
 
 def run_isotherm(Vext_K, dV, access, pressures_bar, T_K, rho_bulk_fn,
-                 framework_mass_g, label: str):
+                 framework_mass_g, label: str, host):
     """Self-consistent FMT-aWBII isotherm.  ``rho_bulk_fn(P)`` returns the
     bulk density in molecules/Å³ at pressure P (bar) and temperature T."""
     Nx, Ny, Nz = Vext_K.shape
-    KX, KY, KZ = make_k_grid(Nx, Ny, Nz, dx=0.7, dy=0.7, dz=0.7)
-    w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(KX, KY, KZ, SIGMA_HS)
+    Lx = float(np.linalg.norm(host.lattice[0]))
+    Ly = float(np.linalg.norm(host.lattice[1]))
+    Lz = float(np.linalg.norm(host.lattice[2]))
+    dx, dy, dz = Lx / Nx, Ly / Ny, Lz / Nz
+    KX, KY, KZ, K = make_k_grid((Nx, Ny, Nz), dx=dx, dy=dy, dz=dz)
+    w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(K, KX, KY, KZ, SIGMA_HS)
 
     def c1_fn(rho):
         wd = compute_weighted_densities(rho, w2_hat, w3_hat, w2vec_hat, SIGMA_HS)
@@ -232,7 +222,7 @@ def main():
         for name, fn, color, ls in EOS_CASES:
             t0 = time.time()
             N_mmol_g = run_isotherm(Vext_K, dV, access, p_grid, T, fn,
-                                    framework_mass_g, name)
+                                    framework_mass_g, name, host)
             dt = time.time() - t0
             curves[name] = (N_mmol_g, color, ls)
             print(f"    {name:14s}  {dt:5.1f}s  "
