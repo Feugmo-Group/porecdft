@@ -116,6 +116,11 @@ def run_isotherm(Vext_K, dV, access, pressures_bar, T_K, rho_bulk_fn,
     dx, dy, dz = Lx / Nx, Ly / Ny, Lz / Nz
     KX, KY, KZ, K = make_k_grid((Nx, Ny, Nz), dx=dx, dy=dy, dz=dz)
     w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(K, KX, KY, KZ, SIGMA_HS)
+    # Physical density cap for FMT-aWBII: η < 0.45 → ρ < 0.45·6/(π σ³).
+    # Without this the deep SC well (~−50 kJ/mol ≈ −20000 K) produces
+    # Boltzmann factors exp(70) which the relative log_clip lets ρ exceed
+    # the hard-sphere close-packing limit → log(1−n_3) overflows to NaN.
+    RHO_MAX = 0.45 * 6.0 / (np.pi * SIGMA_HS ** 3)
 
     def c1_fn(rho):
         wd = compute_weighted_densities(rho, w2_hat, w3_hat, w2vec_hat, SIGMA_HS)
@@ -153,6 +158,7 @@ def run_isotherm(Vext_K, dV, access, pressures_bar, T_K, rho_bulk_fn,
             m=6, beta=0.3, max_iter=800, tol=1e-4,
             accessibility_mask=access, log_clip=25.0,
             safeguard_alpha=0.02, picard_warmup=30, step_clip=2.0,
+            rho_max=RHO_MAX,
         )
         last_err = res.error_history[-1] if res.error_history else np.inf
         if not res.converged and (not np.isfinite(last_err) or last_err > 0.1):
@@ -162,6 +168,7 @@ def run_isotherm(Vext_K, dV, access, pressures_bar, T_K, rho_bulk_fn,
                 c1_callable=c1_fn, c1_bulk=c1_b,
                 alpha=0.005, max_iter=2000, tol=1e-3,
                 accessibility_mask=access, log_clip=25.0,
+                rho_max=RHO_MAX,
             )
         N_abs[i] = float(res.rho.sum() * dV)
         rho_prev = res.rho.copy()
