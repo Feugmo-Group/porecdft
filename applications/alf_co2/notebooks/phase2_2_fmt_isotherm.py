@@ -209,6 +209,11 @@ def main():
                 m=6, beta=0.3, max_iter=800, tol=1e-4,
                 accessibility_mask=access, log_clip=25.0,
                 safeguard_alpha=0.02, picard_warmup=30, step_clip=2.0,
+                # Physical cap on local density — η < 0.45 packing fraction.
+                # Without this the deep SC well drives ρ above the
+                # hard-sphere close-packing limit → FMT log(1−n_3) → NaN
+                # → isotherm diverges at high P.  See solver/anderson.py.
+                rho_max=0.45 * 6.0 / (np.pi * SIGMA_HS ** 3),
             )
             last_err = res.error_history[-1] if res.error_history else np.inf
             # If Anderson oscillated, stabilise with slow Picard from its last iterate
@@ -219,6 +224,7 @@ def main():
                     c1_callable=c1_callable, c1_bulk=c1_b,
                     alpha=0.005, max_iter=2000, tol=1e-3,
                     accessibility_mask=access, log_clip=25.0,
+                    rho_max=0.45 * 6.0 / (np.pi * SIGMA_HS ** 3),
                 )
                 last_err = res.error_history[-1] if res.error_history else np.inf
             rho_solved = res.rho

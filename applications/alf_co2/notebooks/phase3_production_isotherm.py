@@ -432,6 +432,7 @@ def main():
                 m=6, beta=0.3, max_iter=800, tol=1e-4,
                 accessibility_mask=acc0, log_clip=25.0,
                 safeguard_alpha=0.02, picard_warmup=30, step_clip=2.0,
+                rho_max=rho_max_hs,        # FMT close-packing cap
             )
             last_err = res.error_history[-1] if res.error_history else np.inf
             if not res.converged and (not np.isfinite(last_err) or last_err > 0.1):
@@ -445,6 +446,7 @@ def main():
                     c1_callable=c1_callable_fmt, c1_bulk=c1_b,
                     alpha=0.005, max_iter=2000, tol=1e-3,
                     accessibility_mask=acc0, log_clip=25.0,
+                    rho_max=rho_max_hs,
                 )
                 last_err = res.error_history[-1] if res.error_history else np.inf
 
