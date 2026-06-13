@@ -17,6 +17,7 @@ The package is host-agnostic and fluid-agnostic. Any analytic or machine-learnin
 - [Quick start](#quick-start)
 - [Package layout](#package-layout)
 - [Equations of state](#equations-of-state)
+- [Systems tested](#systems-tested)
 - [GPU acceleration](#gpu-acceleration)
 - [Citation](#citation)
 
@@ -113,25 +114,34 @@ Supported pair potentials (`forcefield/`):
 
 ## Solvers
 
-Two production solvers are available in `solver/`:
+Four solvers are available in `solver/`. All minimise the same grand-potential functional and produce identical converged density profiles when starting from the same basin.
+
+| Solver | Function | Backend | When to use |
+|--------|----------|---------|-------------|
+| Picard | `picard_solve` | NumPy | Dilute / low-pressure; safe warm-start seed |
+| Anderson | `anderson_solve` | NumPy | **Production isotherms** — most robust at high packing |
+| Adam (optax) | `jax_solve` | JAX / GPU | Gradient-based minimisation; differentiable pipeline |
+| FIRE2 / NonlinearCG | `fire2_solve` | JAX / GPU | Inertial relaxation; fastest per-iteration on GPU |
 
 ### Picard fixed-point (`picard_solve`)
 
+Log-density update prevents packing-fraction overshoot:
+
 ```
-ρ_{k+1} = ρ_bulk · exp[ c⁽¹⁾[ρ_k] − c⁽¹⁾_bulk − β V_ext ]   (log-density update)
+ρ_{k+1} = ρ_bulk · exp[ c⁽¹⁾[ρ_k] − c⁽¹⁾_bulk − β V_ext ]
 ```
 
-Default step `α = 0.02`. Log-density update prevents packing-fraction overshoot. Suitable for dilute systems and warm-starting from a nearby pressure point.
+Default step `α = 0.02`. Use for dilute systems or as the initial seed for Anderson.
 
 ### Anderson mixing (`anderson_solve`)
 
-Solves the constrained least-squares acceleration:
+Constrained least-squares acceleration over a history of `m` residuals:
 
 ```
 min ‖Σⱼ cⱼ (T[ρ_{k−j}] − ρ_{k−j})‖²  s.t.  Σⱼ cⱼ = 1
 ```
 
-History depth `m = 8`, damping `β = 0.1`. Falls back to Picard (`α = 0.01`) if the residual rises. **Recommended for production isotherms** with pressure-continuation warm-start.
+History depth `m = 8`, damping `β = 0.1`. Falls back to Picard if the residual rises. Recommended for production isotherms with pressure-continuation warm-start.
 
 ```python
 from porecdft.solver import anderson_solve
@@ -141,10 +151,55 @@ result = anderson_solve(
     m=8, beta=0.1, max_iter=5000, tol=1e-6,
     accessibility_mask=access, rho_max=rho_max,
 )
-# result.rho       — converged density profile (numpy array)
-# result.converged — bool
-# result.iterations
+# result.rho        — converged density (numpy array, shape = grid)
+# result.converged  — bool
+# result.iterations — int
 ```
+
+### Adam / optax (`jax_solve`)
+
+Minimises `Ω[ρ]` by gradient descent. Density reparametrised as `ρ = ρ_bulk · exp(η)` to enforce positivity. Gradient `∇_η Ω` from JAX autodiff. Supports all three `f_exc_mode` options (see below).
+
+```python
+from porecdft.solver import jax_solve
+import optax
+
+result = jax_solve(
+    rho0, rho_bulk, vext3d, T_K, c1_fn, c1_bulk, dV,
+    optimizer=optax.adam(2e-3),
+    n_steps=5000, tol=1e-8,
+    accessibility_mask=access,
+    f_exc_mode="endpoint",   # "endpoint" | "rpa" | "quadrature"
+)
+```
+
+### FIRE2 / NonlinearCG (`fire2_solve`)
+
+Inertial relaxation via `optimistix`. JIT-compiled in JAX; runs on CPU or GPU without code changes.
+
+```python
+from porecdft.solver import fire2_solve
+
+result = fire2_solve(
+    rho0, rho_bulk, vext3d, T_K, c1_fn, c1_bulk, dV,
+    n_steps=3000,
+    f_exc_mode="endpoint",   # "endpoint" | "rpa" | "quadrature"
+    n_quad=4,                # GL quadrature order (only for mode="quadrature")
+)
+```
+
+### F_exc mode (`f_exc_mode`) — for Adam and FIRE2
+
+Adam and FIRE2 expose three approximations for the excess free energy integral:
+
+| Mode | Formula | Cost | Notes |
+|------|---------|------|-------|
+| `"endpoint"` | `F_exc ≈ −k_BT ∫(−c⁽¹⁾[ρ]+c⁽¹⁾_b)ρ dr` | 1 × c⁽¹⁾ | Default; gradient consistent with EL condition |
+| `"rpa"` | `F_exc ≈ ½ × endpoint` | 1 × c⁽¹⁾ | Exact only for quadratic F_exc; over-estimates N for FMT/WDA |
+| `"quadrature"` | `F_exc ≈ −k_BT Σᵢ wᵢ ∫(−c⁽¹⁾[λᵢρ]+c⁽¹⁾_b)ρ dr` | n × c⁽¹⁾ | 4-pt Gauss–Legendre; loop unrolled at JAX trace time → GPU-ready |
+
+These stem from the exact **adiabatic connection**:
+`F_exc[ρ] = −k_BT ∫₀¹ dλ ∫ c⁽¹⁾[λρ] ρ dr`
 
 ---
 
@@ -218,7 +273,7 @@ porecdft/
                   with on-disk caching
   eos/            Bulk equations of state (see table below)
   functional/     F_exc: FMT-aWBII, WDA-LJ, Wertheim TPT-1, elastic penalty
-  solver/         picard.py · anderson.py
+  solver/         picard.py · anderson.py · jax_solver.py · fire2.py
   diagnostics/    Binding-site probe, Henry constant, isosteric heat
   plotting/       Standardised diagnostic figures
   warp_backend/   Optional NVIDIA Warp GPU kernels (hot paths)
@@ -254,6 +309,27 @@ print(H2_PR.bulk_density(10.0, 298.0))   # 2.42e-4 molecules/Å³
 print(CO2_SW.bulk_density(10.0, 298.0))  # CO₂ near-critical
 print(H2_FH.bulk_density(1.0,  77.0))   # quantum-corrected H₂ at 77 K
 ```
+
+---
+
+## Systems tested
+
+| System | Fluid | Host | T (K) | P range | Functional | Solver | Script |
+|--------|-------|------|--------|---------|------------|--------|--------|
+| CO₂ / ALF | EPM2 CO₂ (LJ + Coulomb + quadrupole) | Al(HCOO)₃ cubic Im-3m | 278, 298, 318 K | 0–1 bar | FMT-aWBII + WDA + Wertheim TPT-1 + elastic | Anderson | `applications/alf_co2/` |
+| N₂ / ALF | TraPPE N₂ | Al(HCOO)₃ | 298 K | 0–1 bar | FMT-aWBII + WDA | Anderson | `applications/alf_co2/` |
+| H₂ / COF-301 | LJ H₂ + Morse (Co, Ni, Cu, Zn, Mn) | COF-301 | 77, 298 K | 0–100 bar | WDA-LJ + Morse | Anderson | `applications/h2_cof/` |
+| H₂ / COF-322 | LJ H₂ + Morse | COF-322 | 77, 298 K | 0–100 bar | WDA-LJ + Morse | Anderson | `applications/h2_cof/` |
+| H₂ / COF-330 | LJ H₂ + Morse | COF-330 | 77, 298 K | 0–100 bar | WDA-LJ + Morse | Anderson | `applications/h2_cof/` |
+| H₂ / COF-333-CoCl₂ | LJ H₂ + Morse | COF-333-CoCl₂ | 298 K | 0–500 bar | WDA-LJ + Morse | Anderson / Adam / FIRE2 | `applications/h2_cof/` |
+| Ar / ZIF-8 | LJ Ar | ZIF-8 | 87, 273 K | 0–1 bar | FMT-aWBII + WDA | Anderson | `tutorials/01_argon_in_zif8/` |
+| CH₄ / MFI zeolite | LJ CH₄ | MFI (silicalite) | 300 K | 0–10 bar | FMT-aWBII + WDA | Anderson | `tutorials/02_methane_in_mfi/` |
+| CO₂ / Dha-COF | EPM2 CO₂ | Dha-COF | 298 K | 0–1 bar | FMT-aWBII + WDA + Wertheim | Anderson | `tutorials/03_co2_in_dha_cof/` |
+| Xe, Kr / ZIF-8 | LJ Xe, LJ Kr | ZIF-8 | 273 K | 0–1 bar | FMT-aWBII + WDA | Anderson | `tutorials/04_xe_kr_in_zif8/` |
+| CO₂ + N₂ / ZIF-8 | EPM2 CO₂ + TraPPE N₂ | ZIF-8 | 298 K | 0–1 bar | FMT-aWBII + WDA | Anderson | `tutorials/05_co2_n2_in_zif8/` |
+| CH₄ + C₂H₆ / Dha-Tph COF | LJ CH₄ + LJ C₂H₆ | Dha-Tph | 298 K | 0–20 bar | FMT-aWBII + WDA | Anderson | `tutorials/06_ch4_c2h6_in_dha_tph/` |
+
+**Fluids available** (`fluid/`): CO₂ (EPM2), CO₂ (TraPPE), N₂ (TraPPE), CH₄ (TraPPE), C₂H₆ (TraPPE), H₂ (LJ), Ar (LJ), Kr (LJ), Xe (LJ), generic single-site LJ.
 
 ---
 
