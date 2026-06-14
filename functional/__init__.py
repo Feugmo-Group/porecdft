@@ -14,6 +14,7 @@ from porecdft.functional.association import (
 )
 from porecdft.functional.fmt import (
     FMTFunctional,
+    FMTWeightsHat,
     WeightedDensities,
     make_k_grid,
     make_fmt_weights_hat,
@@ -33,6 +34,7 @@ __all__ = [
     "AssociationSite",
     "WertheimAssociation",
     "FMTFunctional",
+    "FMTWeightsHat",
     "WeightedDensities",
     "make_k_grid",
     "make_fmt_weights_hat",

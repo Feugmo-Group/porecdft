@@ -31,6 +31,29 @@ from porecdft.functional.fmt_weights import (
 
 
 @dataclass
+class FMTWeightsHat:
+    """Bundle of pre-computed FMT weight functions in Fourier space.
+
+    Returned by :func:`make_fmt_weights_hat`.  Pass as a single object to
+    :func:`compute_weighted_densities` and :func:`compute_c1` instead of
+    the three separate ``w2_hat``, ``w3_hat``, ``w2vec_hat`` arrays.
+
+    Supports tuple unpacking for backward compatibility::
+
+        weights = make_fmt_weights_hat(K, KX, KY, KZ, sigma)
+        w2_hat, w3_hat, w2vec_hat = weights   # old callers still work
+    """
+    w2_hat: jnp.ndarray
+    w3_hat: jnp.ndarray
+    w2vec_hat: jnp.ndarray   # shape (3, *K)
+
+    def __iter__(self):
+        yield self.w2_hat
+        yield self.w3_hat
+        yield self.w2vec_hat
+
+
+@dataclass
 class WeightedDensities:
     """Container for the six FMT weighted densities at every grid point."""
     n0: jnp.ndarray
@@ -102,9 +125,12 @@ def make_fmt_weights_hat(K, KX, KY, KZ, sigma: float,
                          dz: float | None = None):
     """Build FMT scalar + vector weight functions in Fourier space.
 
-    Returns ``(w2_hat, w3_hat, w2vec_hat)`` where w2vec_hat has shape (3, *K).
-    The vector weight is w2vec = (∇w3) — purely imaginary in Fourier space.
+    Returns an :class:`FMTWeightsHat` with fields ``w2_hat``, ``w3_hat``,
+    ``w2vec_hat`` (shape ``(3, *K)``).  The object supports tuple unpacking
+    so existing ``w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(...)``
+    callers continue to work unchanged.
 
+    The vector weight is w2vec = (∇w3) — purely imaginary in Fourier space.
     If dx/dy/dz are provided, a Lanczos anti-aliasing filter is applied to all
     weight functions (matching the reference legacy implementation).
     """
@@ -116,7 +142,7 @@ def make_fmt_weights_hat(K, KX, KY, KZ, sigma: float,
         w3_hat  = w3_hat * sigma_L
     # w2vec(k) = i·k · w3(k) (gradient of volumetric weight; w3_hat already filtered)
     w2vec_hat = jnp.stack([1j * KX * w3_hat, 1j * KY * w3_hat, 1j * KZ * w3_hat], axis=0)
-    return w2_hat, w3_hat, w2vec_hat
+    return FMTWeightsHat(w2_hat=w2_hat, w3_hat=w3_hat, w2vec_hat=w2vec_hat)
 
 
 def compute_weighted_densities(
