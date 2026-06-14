@@ -151,6 +151,15 @@ class LJWDAFunctional:
         -------
         jnp.ndarray
             Total direct correlation function field (dimensionless).
+
+        Note
+        ----
+        When calling this method inside a ``jax.jit``-compiled function
+        across multiple iterations (e.g., an isotherm pressure loop with
+        ``jax_solve``), call ``self._get_weights(rho.shape, dx, dy, dz)``
+        once *before* entering the loop to populate the weight cache with
+        concrete arrays.  Without this, the cache stores JAX DynamicJaxprTracers
+        from the first JIT trace which become stale on re-entry.
         """
         shape = rho.shape
         w2_hat, w3_hat, w2vec_hat, w_hat = self._get_weights(shape, dx, dy, dz)
