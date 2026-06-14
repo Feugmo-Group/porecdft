@@ -194,3 +194,182 @@ class PurePCSAFTFunctional:
         w_lambd, w_zeta3 = self._weight_chain_hat(K_rfft)
         c1_field = self.c1(rho, d ** 3, w_disp, w_lambd, w_zeta3)
         return float(c1_field.mean())
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Multi-component PC-SAFT cDFT
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class MultiPCSAFTFunctional:
+    """Multi-component PC-SAFT (hard-chain + dispersion) cDFT functional.
+
+    Implements Stierle 2024 Appendix A in full:
+
+    * Hard-chain Eq. (16) with cavity correlation y^dd(n_ζ2, n_ζ3) of
+      Eq. (17) (multi-component form — depends on **both** ζ2 and ζ3
+      with explicit R_i factors, unlike the :class:`PurePCSAFTFunctional`
+      simplification).
+    * Dispersion Eq. (A.10 of Gross & Sadowski 2001) with the standard
+      Lorentz--Berthelot binary combining rules
+      σ_ij = (σ_i+σ_j)/2 and  ε_ij = √(ε_i ε_j)(1 − k_ij).
+
+    Parameters are arrays of length ``C`` (the number of components).
+    Density inputs/outputs are shape ``(C, Nx, Ny, Nz)``.
+
+    The c¹ on the grid is obtained via ``jax.grad`` on the integrated
+    Helmholtz density; the bulk reference uses the same path on a tiny
+    uniform 4×4×4 box for consistency.
+
+    Notes
+    -----
+    Only the **dispersion + hard-chain** part of F^exc is returned here.
+    Combine with the m-scaled FMT-aWBII c¹ (one HS reference per
+    component, weights multiplied by m_c) for the full PC-SAFT cDFT.
+    """
+    m:      "jnp.ndarray"   # (C,)
+    sigma:  "jnp.ndarray"   # (C,) Å
+    eps_k:  "jnp.ndarray"   # (C,) K
+    T:      float
+    k_ij:   "jnp.ndarray | None" = None    # (C, C) binary interaction
+
+    def __post_init__(self):
+        self.m     = jnp.asarray(self.m,     dtype=jnp.float32)
+        self.sigma = jnp.asarray(self.sigma, dtype=jnp.float32)
+        self.eps_k = jnp.asarray(self.eps_k, dtype=jnp.float32)
+        if self.k_ij is None:
+            self.k_ij = jnp.zeros((self.m.size, self.m.size), dtype=jnp.float32)
+        else:
+            self.k_ij = jnp.asarray(self.k_ij, dtype=jnp.float32)
+
+    # ------------------------- HSD per component ---------------------
+    def _d(self):  # (C,)
+        return self.sigma * (1.0 - 0.12 * jnp.exp(-3.0 * self.eps_k / self.T))
+
+    def _R(self):  # (C,)
+        return 0.5 * self._d()
+
+    # ------------------------- weight functions ----------------------
+    def _weights(self, K):
+        """Return ``(w_disp, w_lambd, w_zeta2, w_zeta3)`` each shape (C, *K)."""
+        R = self._R()                                           # (C,)
+        # broadcast: each row uses its own R, K is full grid
+        K_np = np.asarray(K)
+        ws_disp, ws_l, ws_z2, ws_z3 = [], [], [], []
+        for c in range(R.size):
+            arg = 2.0 * float(R[c]) * K_np
+            j0  = spherical_jn(0, arg)
+            j2  = spherical_jn(2, arg)
+            d_c = 2.0 * float(R[c])
+            m_c = float(self.m[c])
+            # dispersion ω_disp = m · (j0 + j2)  at 2 ψ R k
+            arg_d = 2.0 * _PSI * float(R[c]) * K_np
+            j0d   = spherical_jn(0, arg_d)
+            j2d   = spherical_jn(2, arg_d)
+            ws_disp.append(jnp.asarray(m_c * (j0d + j2d)))
+            ws_l.append(jnp.asarray(j0))
+            ws_z2.append(jnp.asarray((np.pi / 6.0) * m_c * d_c ** 2 * (j0 + j2)))
+            ws_z3.append(jnp.asarray((np.pi / 6.0) * m_c * d_c ** 3 * (j0 + j2)))
+        return (jnp.stack(ws_disp, axis=0),
+                jnp.stack(ws_l,    axis=0),
+                jnp.stack(ws_z2,   axis=0),
+                jnp.stack(ws_z3,   axis=0))
+
+    # ------------------------ Helmholtz density ----------------------
+    def _phi_disp(self, n: jnp.ndarray) -> jnp.ndarray:
+        """Multi-component dispersion Φ_disp/k_BT (Stierle Eq. via Gross 2001)."""
+        eps_T  = self.eps_k / self.T                                # (C,)
+        # binary parameters σ_ij, ε_ij with Lorentz--Berthelot
+        sigma_ij = 0.5 * (self.sigma[:, None] + self.sigma[None, :])
+        eps_ij   = jnp.sqrt(self.eps_k[:, None] * self.eps_k[None, :]) * (1.0 - self.k_ij)
+        eps_ij_T = eps_ij / self.T
+        e1sig3 = eps_ij_T * sigma_ij ** 3
+        e2sig3 = (eps_ij_T) ** 2 * sigma_ij ** 3
+        # local packing fraction η(r) = Σ_c (4π/3) n_c R_c³
+        R = self._R()
+        n_pos = jnp.clip(n, 0.0, None)
+        eta = jnp.sum((4.0 / 3.0) * jnp.pi * n_pos
+                      * (R[(slice(None),) + (None,) * (n.ndim - 1)] ** 3),
+                      axis=0)
+        # mean chain length m_hat — Gross & Sadowski Eq. (A.5)
+        m = self.m[(slice(None),) + (None,) * (n.ndim - 1)]
+        denom = jnp.sum(n_pos / m, axis=0)
+        # Safe-divide: avoid 0/0 NaN in jax.grad when denom=0 at near-zero density.
+        # JAX evaluates gradients through both branches of jnp.where, so we must
+        # ensure the "true" branch is numerically safe even where the condition is False.
+        safe_denom = jnp.where(denom > 1e-30, denom, 1.0)
+        m_hat = jnp.where(denom > 1e-30, jnp.sum(n_pos, axis=0) / safe_denom, 1.0)
+        m1 = (m_hat - 1.0) / m_hat
+        m2 = (m_hat - 2.0) / m_hat
+        # I1, I2 polynomials in η
+        i1   = jnp.zeros_like(eta)
+        c1i2 = jnp.zeros_like(eta)
+        for i in range(7):
+            i1   = i1   + (_A0[i] + m1 * _A1[i] + m1 * m2 * _A2[i]) * eta ** i
+            c1i2 = c1i2 + (_B0[i] + m1 * _B1[i] + m1 * m2 * _B2[i]) * eta ** i
+        C1_denom = (1.0
+                    + m_hat * (8.0 * eta - 2.0 * eta ** 2) / (1.0 - eta) ** 4
+                    + (1.0 - m_hat) * (20.0 * eta - 27.0 * eta ** 2
+                                        + 12.0 * eta ** 3 - 2.0 * eta ** 4)
+                    / ((1.0 - eta) * (2.0 - eta)) ** 2)
+        c1i2 = c1i2 / C1_denom
+        # quadratic forms Σ_ij n_i n_j (ε σ³)_ij
+        nn_e1 = jnp.einsum("i...,j...,ij->...", n_pos, n_pos, e1sig3)
+        nn_e2 = jnp.einsum("i...,j...,ij->...", n_pos, n_pos, e2sig3)
+        return -2.0 * jnp.pi * i1 * nn_e1 - jnp.pi * m_hat * c1i2 * nn_e2
+
+    def _phi_chain(self, rho, n_lambd, n_zeta2, n_zeta3) -> jnp.ndarray:
+        """Multi-component hard-chain Φ_hc/k_BT  (Stierle Eq. 16 + 17)."""
+        floor = 1e-8
+        d_arr = self._d()                                   # (C,)
+        z3    = jnp.clip(n_zeta3, 0.0, 0.95)
+        inv   = 1.0 / (1.0 - z3)
+        # Per-component cavity correlation y^dd_i(n_ζ2, n_ζ3) — Stierle (17).
+        per_comp = []
+        for c in range(d_arr.size):
+            R_c   = 0.5 * d_arr[c]
+            term  = (inv
+                     + 3.0 * R_c * n_zeta2 * inv ** 2
+                     + 2.0 * (R_c * n_zeta2) ** 2 * inv ** 3)
+            n_l_c = jnp.clip(n_lambd[c], floor, None)
+            rho_c = jnp.clip(rho[c],     floor, None)
+            per_comp.append(-(self.m[c] - 1.0) * rho_c
+                             * (jnp.log(term * n_l_c) - 1.0))
+        return jnp.stack(per_comp, axis=0).sum(axis=0)
+
+    def helmholtz_density(self, rho, w_disp, w_lambd, w_zeta2, w_zeta3):
+        """Total dispersion + hard-chain φ(r)/k_BT, shape (Nx,Ny,Nz)."""
+        rho_hat = jnp.fft.rfftn(rho, axes=(-3, -2, -1))         # (C, ..., k)
+        inv = lambda H: jnp.fft.irfftn(H, s=rho.shape[-3:], axes=(-3, -2, -1))
+        # per-component weighted densities (dispersion, lambda)
+        n_disp  = inv(rho_hat * w_disp)                          # (C, Nx, Ny, Nz)
+        n_lambd = inv(rho_hat * w_lambd)
+        # summed weighted densities ζ2, ζ3
+        n_zeta2 = inv(jnp.sum(rho_hat * w_zeta2, axis=0))         # (Nx, Ny, Nz)
+        n_zeta3 = inv(jnp.sum(rho_hat * w_zeta3, axis=0))
+        phi = self._phi_disp(n_disp)
+        # Only add chain term if any m > 1.
+        if bool(jnp.any(self.m > 1.0 + 1e-9)):
+            phi = phi + self._phi_chain(rho, n_lambd, n_zeta2, n_zeta3)
+        return phi
+
+    def c1(self, rho, dV, w_disp, w_lambd, w_zeta2, w_zeta3):
+        """Per-component c¹_c(r) via reverse-mode AD; shape (C, *grid)."""
+        def F(r):
+            return jnp.sum(self.helmholtz_density(r, w_disp, w_lambd,
+                                                  w_zeta2, w_zeta3)) * dV
+        grad = jax.grad(F)(rho)
+        return -grad / dV
+
+    def bulk_c1(self, rho_b):
+        """Per-component bulk c¹ at uniform densities ``rho_b`` (shape (C,))."""
+        from porecdft.functional.fmt import make_k_grid
+        n = 4
+        d = 1.0
+        rho_b = jnp.asarray(rho_b, dtype=jnp.float32)
+        rho = jnp.broadcast_to(rho_b[:, None, None, None],
+                                (rho_b.size, n, n, n))
+        _, _, _, K_rfft = make_k_grid((n, n, n), d, d, d, real_fft=True)
+        wD, wL, wZ2, wZ3 = self._weights(K_rfft)
+        c1_field = self.c1(rho, d ** 3, wD, wL, wZ2, wZ3)
+        return jnp.asarray([float(c1_field[c].mean()) for c in range(rho_b.size)])
