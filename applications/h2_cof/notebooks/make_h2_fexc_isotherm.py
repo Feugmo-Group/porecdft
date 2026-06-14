@@ -144,11 +144,10 @@ def run_adam(vext3d, dV, wda, access, rho_max, dx, dy, dz, mode, n_quad=4):
     return np.array(N_arr), np.array(T_arr)
 
 
-def mol_uc_to_wt(N_arr, V_cell_A3, n_uc=1):
-    """mol/u.c. → wt% H2, using unit-cell mass from COF-333 CIF."""
-    # COF-333-CoCl2: ~5000 Da / u.c. (approximate; from Pramudya SI)
-    M_host_g = 5000.0 * n_uc
-    m_H2_g   = N_arr * H2_MW * 1e3 * NA / NA  # N mol × 2.016 g/mol
+def mol_uc_to_wt(N_arr, n_uc=1):
+    """molecules/u.c. → wt% H2 (COF-333-CoCl2: ~5000 Da/u.c., Pramudya SI)."""
+    M_host_g = 5000.0 * n_uc   # g/mol of u.c.
+    m_H2_g   = N_arr * H2_MW * 1e3   # molecules × (g/mol) — NA cancels in ratio
     return 100.0 * m_H2_g / (m_H2_g + M_host_g)
 
 
@@ -177,12 +176,24 @@ def main():
                               mode="endpoint")
         np.savez(ep_cache, N_ep=N_ep, T_ep=T_ep)
 
-    print(f"\n── Adam / GL-{N_QUAD}pt quadrature ──", flush=True)
-    N_gl, T_gl = run_adam(vext3d, dV, wda, access, rho_max, dx, dy, dz,
-                          mode="quadrature", n_quad=N_QUAD)
+    gl_cache = RESULTS_DIR / "fexc_isotherm_gl_cache.npz"
+    cmp_cache = RESULTS_DIR / "fexc_isotherm_comparison.npz"
+    if gl_cache.exists():
+        _d = np.load(gl_cache)
+        N_gl, T_gl = np.array(_d["N_gl"]), np.array(_d["T_gl"])
+        print(f"  Adam-GL{N_QUAD} loaded from cache", flush=True)
+    elif cmp_cache.exists():
+        _d = np.load(cmp_cache)
+        N_gl, T_gl = np.array(_d["N_gl"]), np.array(_d["T_gl"])
+        print(f"  Adam-GL{N_QUAD} loaded from comparison cache", flush=True)
+    else:
+        print(f"\n── Adam / GL-{N_QUAD}pt quadrature ──", flush=True)
+        N_gl, T_gl = run_adam(vext3d, dV, wda, access, rho_max, dx, dy, dz,
+                              mode="quadrature", n_quad=N_QUAD)
+        np.savez(gl_cache, N_gl=N_gl, T_gl=T_gl)
 
     # ── Save results ──────────────────────────────────────────────────────
-    np.savez(RESULTS_DIR / "fexc_isotherm_comparison.npz",
+    np.savez(cmp_cache,
              P=P_ISO, N_and=N_and, N_ep=N_ep, N_gl=N_gl,
              T_and=T_and, T_ep=T_ep, T_gl=T_gl)
 
