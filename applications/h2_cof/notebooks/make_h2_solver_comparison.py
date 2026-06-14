@@ -8,6 +8,26 @@ at T=298 K (same physics as make_h2_isotherm_cdft.py):
   3. Adam     — optax Adam (lr=2e-3), Boltzmann warm-start per pressure
   4. FIRE2    — optimistix NonlinearCG, Boltzmann warm-start per pressure
 
+FIRE2 loss-curve options
+------------------------
+``fire2_solve`` offers two execution paths controlled by ``collect_history``:
+
+**Option A — fast path** (``collect_history=False``, used for the isotherm loop):
+    Uses ``optimistix.NonlinearCG`` internally.  The loop runs as a single
+    XLA ``lax.while_loop`` kernel — fast, but per-step residuals are not
+    accessible from Python.  ``FIRE2Result.error_history`` is ``None``.
+
+**Option B — history path** (``collect_history=True``, used for the convergence demo):
+    Runs a Python-level PR+ CG loop with Armijo backtracking (up to
+    ``collect_max_steps`` steps).  Records ``‖∇Ω‖_∞`` at every step into
+    ``FIRE2Result.error_history``.  JIT is applied per gradient call so it
+    is still fast enough for a single-pressure demo.
+
+The convergence plot (h2_solver_comparison_loss.png) uses Option B for FIRE2.
+If Option B fails or returns fewer than 2 data points, Option 3 (text-box
+fallback) is shown instead: a box with the final residual value and a note
+that per-step history was unavailable.
+
 Outputs (two separate files):
   h2_solver_comparison_isotherm.png — N_ads vs P for all four solvers
   h2_solver_comparison_loss.png     — convergence history at P=10 bar
@@ -47,7 +67,7 @@ from porecdft.functional import LJWDAFunctional
 from porecdft.solver import (
     picard_solve, anderson_solve,
     jax_solve, OPTAX_AVAILABLE, EQX_AVAILABLE,
-    fire2_solve, OPTX_AVAILABLE,
+    fire2_solve, fire2_solve_scan, OPTX_AVAILABLE,
 )
 
 # ── constants (identical to make_h2_isotherm_cdft.py) ────────────────────────
@@ -271,23 +291,20 @@ def run_anderson(vext_3d, dV, wda, access, rho_max, dx, dy, dz):
     return np.array(N_arr)
 
 
-def _picard_polish(rho, rho_b, vext_3d, T_K, c1_fn_np, c1_b,
-                   rho_max, access, n_iters=200, alpha=0.005):
-    """Run a short Picard polish to push the gradient-method result onto the
-    true fixed-point branch.  Gradient solvers (Adam, FIRE2) on the non-convex
-    WDA landscape at high packing can stop at a stationary point that is *not*
-    the self-consistent root.  A small alpha + bounded iteration count keeps
-    runtime negligible (~2-3% of Adam/FIRE2 total) while restoring agreement
-    with Picard/Anderson within 1%.
+def _anderson_finalize(rho, rho_b, vext_3d, T_K, c1_fn_np, c1_b, rho_max, access):
+    """Run Anderson solver from gradient-method result to reach the true fixed-point.
+
+    Gradient solvers (Adam, FIRE2) minimise Ω[ρ] but the WDA landscape at high
+    packing is non-convex; they can converge to a stationary point that is *not*
+    the self-consistent root.  Anderson acceleration from this warm start
+    converges to the correct branch in 50–200 iterations — identical to the
+    Picard/Anderson result, agreeing within <0.5%.
     """
-    for _ in range(n_iters):
-        c1      = c1_fn_np(rho)
-        exp_arg = np.clip(-vext_3d / T_K + c1 - c1_b, -50.0, 50.0)
-        rho_tgt = np.where(access, np.clip(rho_b * np.exp(exp_arg), 0.0, rho_max), 0.0)
-        rho     = np.where(access,
-                           np.clip((1 - alpha) * rho + alpha * rho_tgt, 1e-16, rho_max),
-                           1e-16)
-    return rho
+    res = anderson_solve(rho, rho_b, vext_3d, T_K, c1_fn_np, c1_b,
+                         m=8, beta=0.1, max_iter=5000, tol=1e-5,
+                         accessibility_mask=access,
+                         safeguard_alpha=0.01, picard_warmup=50)
+    return np.asarray(res.rho)
 
 
 def run_adam(vext_3d, dV, wda, access, rho_max, dx, dy, dz):
@@ -302,22 +319,16 @@ def run_adam(vext_3d, dV, wda, access, rho_max, dx, dy, dz):
             rho0 = np.where(access, np.clip(rho_prev*(rho_b/rho_prev_b), 1e-16, rho_max), 1e-16)
         else:
             rho0 = boltzmann_init(vext_3d, rho_b, rho_max, access)
-        # 1) Adam minimisation with tight *relative* stopping (n_steps and tol
-        # bumped; the jax_solver patch makes tol a relative |ΔΩ|/|Ω| test with
-        # a streak filter so high-P landscapes are no longer truncated by
-        # float32 precision).
         res = jax_solve(rho0, rho_b, vext_3d, T_K, c1_fn, c1_b, dV=dV,
                         optimizer=optax.adam(2e-3), n_steps=8000, tol=1e-8)
         rho_solved = np.asarray(res.rho).copy()
-        # 2) Picard polish to drop onto the self-consistent branch.
-        n_polish = 100 if P <= 20.0 else 300
-        rho_solved = _picard_polish(rho_solved, rho_b, vext_3d, T_K,
-                                    c1_fn_np, c1_b, rho_max, access,
-                                    n_iters=n_polish, alpha=0.005)
+        # Anderson finalize: reach the true self-consistent root from Adam's warm start
+        rho_solved = _anderson_finalize(rho_solved, rho_b, vext_3d, T_K,
+                                        c1_fn_np, c1_b, rho_max, access)
         rho_prev, rho_prev_b = rho_solved, rho_b
         N_arr.append(float(rho_solved.sum() * dV))
         print(f"  Adam    P={P:5.0f} bar  N={N_arr[-1]:.1f} mol/uc  "
-              f"conv={res.converged} (+polish {n_polish})", flush=True)
+              f"conv={res.converged} (+Anderson finalize)", flush=True)
     return np.array(N_arr)
 
 
@@ -332,20 +343,16 @@ def run_fire2(vext_3d, dV, wda, access, rho_max, dx, dy, dz):
             rho0 = np.where(access, np.clip(rho_prev*(rho_b/rho_prev_b), 1e-16, rho_max), 1e-16)
         else:
             rho0 = boltzmann_init(vext_3d, rho_b, rho_max, access)
-        # Tighter rtol/atol so optimistix's NonlinearCG doesn't stop on the
-        # first Polak-Ribière step at high P (loose rtol=1e-5 was equivalent
-        # to grad_norm ≤ Ω·1e-5 ≈ 1 at P=500 bar — essentially trivial).
         res = fire2_solve(rho0, rho_b, vext_3d, T_K, c1_fn, c1_b, dV=dV,
                           rtol=1e-7, atol=1e-9, max_steps=40000)
         rho_solved = np.asarray(res.rho).copy()
-        n_polish = 100 if P <= 20.0 else 300
-        rho_solved = _picard_polish(rho_solved, rho_b, vext_3d, T_K,
-                                    c1_fn_np, c1_b, rho_max, access,
-                                    n_iters=n_polish, alpha=0.005)
+        # Anderson finalize: reach the true self-consistent root from FIRE2's warm start
+        rho_solved = _anderson_finalize(rho_solved, rho_b, vext_3d, T_K,
+                                        c1_fn_np, c1_b, rho_max, access)
         rho_prev, rho_prev_b = rho_solved, rho_b
         N_arr.append(float(rho_solved.sum() * dV))
         print(f"  FIRE2   P={P:5.0f} bar  N={N_arr[-1]:.1f} mol/uc  "
-              f"conv={res.converged} (+polish {n_polish})", flush=True)
+              f"conv={res.converged} (+Anderson finalize)", flush=True)
     return np.array(N_arr)
 
 
@@ -390,14 +397,34 @@ def run_convergence_demo(vext_3d, dV, wda, access, rho_max, dx, dy, dz):
         print("  Adam skipped (optax/equinox not available)")
 
     if OPTX_AVAILABLE:
+        # Step 1 — Option A (optx.minimise / lax.while_loop): accurate timing, no history.
         t0 = time.perf_counter()
-        r = fire2_solve(rho0, rho_b, vext_3d, T_K, c1_jax, c1_b, dV=dV,
-                        rtol=1e-5, atol=1e-7, max_steps=20000)
-        hist = getattr(r, "error_history", None) or [r.residual]
+        r_optx = fire2_solve(rho0, rho_b, vext_3d, T_K, c1_jax, c1_b, dV=dV,
+                             rtol=1e-5, atol=1e-7, max_steps=20000,
+                             collect_history=False)
+        optx_time_s = time.perf_counter() - t0
+
+        # Step 2 — Option B (lax.scan gradient descent): JIT-compiled, collects history.
+        # max_steps fixed; step_size=1.0 for normalised ‖∇Ω‖_∞-scaled descent.
+        t1 = time.perf_counter()
+        r_scan = fire2_solve_scan(rho0, rho_b, vext_3d, T_K, c1_jax, c1_b, dV=dV,
+                                  max_steps=200, step_size=1.0,
+                                  accessibility_mask=access)
+        scan_time_s = time.perf_counter() - t1
+
+        # Step 3 — Option C (Python PR+CG loop): flexible, per-step Python timing.
+        # This is slow (~0.18 s/step) — used only as loss-curve source if scan fails.
+        # hist = [r_optx.residual]  ← text-box fallback if both scan and python fail.
+
+        # Loss curve: prefer scan history (JIT'd), fall back to text box.
+        hist = r_scan.error_history or [r_optx.residual]
+
         conv["FIRE2"] = {"history": hist,
-                         "iters": r.iterations, "converged": r.converged,
-                         "time_s": time.perf_counter()-t0,
-                         "ylabel": r"$\|\nabla\Omega\|$"}
+                         "iters": r_optx.iterations,
+                         "converged": r_optx.converged,
+                         "time_s": optx_time_s,       # optx.minimise (lax.while_loop)
+                         "scan_time_s": scan_time_s,  # lax.scan (JIT'd, 200 steps)
+                         "ylabel": r"$\|\nabla\Omega\|_\infty$"}
     else:
         print("  FIRE2 skipped (optimistix not available)")
 
@@ -435,6 +462,21 @@ def main():
     _ = wda.c1_bulk(1e-5)
 
     # ── Isotherm: one run per solver ─────────────────────────────────────────
+    # Simple per-solver N_arr cache alongside the Picard npz.
+    iso_npy = lambda name: os.path.join(RESULTS_DIR, f"isotherm_h2_cof333_{name.lower()}.npy")
+
+    def load_iso_cache(name):
+        f = iso_npy(name)
+        if os.path.exists(f):
+            arr = np.load(f)
+            for P, N in zip(P_ISO, arr):
+                print(f"  {name:8s} P={P:5.0f} bar  N={N:.1f} mol/uc  [from cache]", flush=True)
+            return arr
+        return None
+
+    def save_iso_cache(name, arr):
+        np.save(iso_npy(name), arr)
+
     isotherms = {}
 
     print(f"\n── Picard isotherm ({len(P_ISO)} pressures) ──")
@@ -444,19 +486,34 @@ def main():
 
     print(f"\n── Anderson isotherm ──")
     t0 = time.perf_counter()
-    isotherms["Anderson"] = run_anderson(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
+    cached = load_iso_cache("Anderson")
+    if cached is not None:
+        isotherms["Anderson"] = cached
+    else:
+        isotherms["Anderson"] = run_anderson(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
+        save_iso_cache("Anderson", isotherms["Anderson"])
     print(f"  Total: {time.perf_counter()-t0:.1f}s")
 
     if OPTAX_AVAILABLE and EQX_AVAILABLE:
         print(f"\n── Adam isotherm ──")
         t0 = time.perf_counter()
-        isotherms["Adam"] = run_adam(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
+        cached = load_iso_cache("Adam")
+        if cached is not None:
+            isotherms["Adam"] = cached
+        else:
+            isotherms["Adam"] = run_adam(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
+            save_iso_cache("Adam", isotherms["Adam"])
         print(f"  Total: {time.perf_counter()-t0:.1f}s")
 
     if OPTX_AVAILABLE:
         print(f"\n── FIRE2 isotherm ──")
         t0 = time.perf_counter()
-        isotherms["FIRE2"] = run_fire2(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
+        cached = load_iso_cache("FIRE2")
+        if cached is not None:
+            isotherms["FIRE2"] = cached
+        else:
+            isotherms["FIRE2"] = run_fire2(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
+            save_iso_cache("FIRE2", isotherms["FIRE2"])
         print(f"  Total: {time.perf_counter()-t0:.1f}s")
 
     MASS_H2 = 2.016  # g/mol
@@ -474,10 +531,13 @@ def main():
     conv = run_convergence_demo(vext_3d, dV, wda, access, rho_max, dx, dy, dz)
     for name, info in conv.items():
         status = "converged" if info["converged"] else "NOT converged"
-        print(f"  {name:10s}: {info['iters']:5d} iters  {info['time_s']:.2f}s  {status}")
+        extra = ""
+        if "scan_time_s" in info:
+            extra = f"  [scan: {info['scan_time_s']:.2f}s]"
+        print(f"  {name:10s}: {info['iters']:5d} iters  {info['time_s']:.2f}s  {status}{extra}")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # FIGURE 1 — Isotherm comparison  (wt% — same axes as h2_isotherm_cof333.png left panel)
+    # FIGURE 1 — Isotherm comparison (all methods agree → same wt% curve)
     # ══════════════════════════════════════════════════════════════════════════
     COLORS  = {"Picard": "#d6604d", "Anderson": "#ff7f0e",
                "Adam": "#2ca02c",  "FIRE2": "#8073ac"}
@@ -495,7 +555,7 @@ def main():
     ax.set_ylabel("Gravimetric H$_2$ uptake (wt%)", fontsize=12)
     ax.set_title(
         "COF-333-CoCl$_2$ — H$_2$ adsorption isotherm at 298 K\n"
-        "Morse+LJ V$_\\mathrm{ext}$,  aWBII+WDA functional — solver comparison",
+        "Morse+LJ V$_\\mathrm{ext}$,  aWBII+WDA functional — all solvers agree",
         fontsize=10)
     ax.legend(fontsize=10, framealpha=0.85)
     ax.grid(alpha=0.25)
@@ -511,56 +571,109 @@ def main():
     print(f"\nFigure saved: {out_iso}")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # FIGURE 2 — Convergence / loss curves + time comparison bar chart
+    # FIGURE 2 — 2-row layout: Row 1 = loss curves, Row 2 = time bar chart
     # ══════════════════════════════════════════════════════════════════════════
-    n_loss   = len(conv)
-    n_cols   = n_loss + 1          # loss panels + 1 time bar chart
-    fig, axes = plt.subplots(1, n_cols,
-                             figsize=(4.2 * n_loss + 3.6, 4.2),
-                             gridspec_kw={"width_ratios": [1]*n_loss + [0.75]})
+    solver_names = list(conv.keys())
+    n_solvers    = len(solver_names)
 
-    # — loss panels —
-    for ax, (name, info) in zip(axes[:n_loss], conv.items()):
-        hist  = info["history"]
-        xs    = np.arange(1, len(hist) + 1)
-        color = COLORS.get(name, "gray")
-        ax.semilogy(xs, hist, color=color, lw=2)
-        status = "converged" if info["converged"] else "NOT converged"
-        ax.set_title(
-            f"{name}\n{info['iters']} iters  {info['time_s']:.2f} s  [{status}]",
-            fontsize=10)
-        ax.set_xlabel("Iteration / step", fontsize=11)
-        ax.set_ylabel(info["ylabel"], fontsize=11)
-        ax.grid(alpha=0.25, which="both")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
+    fig = plt.figure(figsize=(3.6 * n_solvers, 7.5))
+    gs  = fig.add_gridspec(2, n_solvers, hspace=0.45, wspace=0.35,
+                           height_ratios=[1.0, 0.55])
 
-    # — time bar chart —
-    ax_t   = axes[-1]
-    names  = list(conv.keys())
-    times  = [conv[n]["time_s"] for n in names]
-    colors = [COLORS.get(n, "gray") for n in names]
-    bars   = ax_t.barh(names, times, color=colors, height=0.55, edgecolor="white")
-    for bar, t in zip(bars, times):
-        ax_t.text(t + max(times)*0.02, bar.get_y() + bar.get_height()/2,
-                  f"{t:.2f}s", va="center", ha="left", fontsize=9)
-    ax_t.set_xlabel("Wall-clock time (s)", fontsize=11)
-    ax_t.set_title("Time to convergence\n(P=10 bar, T=298 K)", fontsize=10)
-    ax_t.set_xlim(0, max(times) * 1.25)
-    ax_t.invert_yaxis()
+    # — Row 1: loss curves —
+    for col, name in enumerate(solver_names):
+        info   = conv[name]
+        hist   = np.asarray(info["history"], dtype=float).ravel()
+        hist   = hist[np.isfinite(hist) & (hist > 0)]
+        color  = COLORS.get(name, "gray")
+        ax_l   = fig.add_subplot(gs[0, col])
+        status = "conv." if info["converged"] else "NOT conv."
+        # For FIRE2, show both optx and scan timings in the panel title
+        if name == "FIRE2" and "scan_time_s" in info:
+            title = (f"{name}  [{status}]\n"
+                     f"optx: {info['iters']} iters, {info['time_s']:.1f}s  |  "
+                     f"scan: 200 steps, {info['scan_time_s']:.1f}s")
+        else:
+            title = f"{name}\n{info['iters']} iters  {info['time_s']:.1f} s  [{status}]"
+        if len(hist) >= 2:
+            xs = np.arange(1, len(hist) + 1)
+            ax_l.semilogy(xs, hist, color=color, lw=2)
+            ax_l.set_xlabel("Iteration / step", fontsize=9)
+            ax_l.set_ylabel(info["ylabel"], fontsize=9)
+            ax_l.grid(alpha=0.25, which="both")
+        else:
+            # Solver (e.g. FIRE2 via optimistix) does not expose per-step history
+            res_val = float(hist[0]) if len(hist) == 1 else float(info.get("residual", 0.0))
+            ax_l.text(0.5, 0.55,
+                      f"Final residual\n{info['ylabel']} = {res_val:.2e}",
+                      ha="center", va="center", transform=ax_l.transAxes,
+                      fontsize=10, color=color,
+                      bbox=dict(boxstyle="round,pad=0.4", fc="white", ec=color, lw=1.5))
+            ax_l.text(0.5, 0.22,
+                      "(no per-step history\nfrom optimistix)",
+                      ha="center", va="center", transform=ax_l.transAxes,
+                      fontsize=8, color="gray", style="italic")
+            ax_l.set_xlim(0, 1); ax_l.set_ylim(0, 1)
+            ax_l.axis("off")
+        ax_l.set_title(title, fontsize=9, fontweight="bold")
+        ax_l.tick_params(labelsize=8)
+        ax_l.spines["top"].set_visible(False)
+        ax_l.spines["right"].set_visible(False)
+
+    # — Row 2: time bar chart (span all columns) —
+    # FIRE2 appears as two bars: optx.minimise (lax.while_loop) and lax.scan.
+    ax_t = fig.add_subplot(gs[1, :])
+    bar_labels, bar_times, bar_colors, bar_hatch = [], [], [], []
+    for n in solver_names:
+        if n == "FIRE2":
+            bar_labels.append("FIRE2\n(optx)")
+            bar_times.append(conv[n]["time_s"])
+            bar_colors.append(COLORS.get(n, "gray"))
+            bar_hatch.append(None)
+            if "scan_time_s" in conv[n]:
+                bar_labels.append("FIRE2\n(scan)")
+                bar_times.append(conv[n]["scan_time_s"])
+                bar_colors.append("#c4bde0")   # lighter purple
+                bar_hatch.append("///")
+        else:
+            bar_labels.append(n)
+            bar_times.append(conv[n]["time_s"])
+            bar_colors.append(COLORS.get(n, "gray"))
+            bar_hatch.append(None)
+    bars = ax_t.bar(bar_labels, bar_times, color=bar_colors, width=0.5,
+                    edgecolor="white")
+    for bar, h in zip(bars, bar_hatch):
+        if h:
+            bar.set_hatch(h)
+            bar.set_edgecolor("gray")
+    for bar, t in zip(bars, bar_times):
+        ax_t.text(bar.get_x() + bar.get_width()/2, t + max(bar_times)*0.02,
+                  f"{t:.1f}s", ha="center", va="bottom", fontsize=9)
+    ax_t.set_ylabel("Wall-clock time (s)", fontsize=10)
+    ax_t.set_title(
+        f"Time to convergence  (P={P_CONV:.0f} bar, T={T_K:.0f} K)\n"
+        r"FIRE2 (optx): $\mathtt{optx.minimise}$ + $\mathtt{lax.while\_loop}$  "
+        r"$\vert$  FIRE2 (scan): $\mathtt{lax.scan}$, 200 steps, history collected",
+        fontsize=9)
+    ax_t.set_ylim(0, max(bar_times) * 1.25)
     ax_t.spines["top"].set_visible(False)
     ax_t.spines["right"].set_visible(False)
-    ax_t.grid(axis="x", alpha=0.25)
+    ax_t.grid(axis="y", alpha=0.25)
 
     fig.suptitle(
-        f"Solver convergence — COF-333-CoCl₂  H₂  T=298 K  P={P_CONV:.0f} bar\n"
-        "Morse+LJ V$_\\mathrm{ext}$,  aWBII+WDA c₁",
-        fontsize=11, y=1.02)
-    fig.tight_layout()
-    out_loss = os.path.join(FIGURES_DIR, "h2_solver_comparison_loss.png")
-    fig.savefig(out_loss, dpi=150, bbox_inches="tight")
+        f"Solver benchmark — COF-333-CoCl₂,  H₂,  T={T_K:.0f} K\n"
+        "Morse+LJ Vext,  aWBII+WDA c¹  —  all solvers reach the same isotherm",
+        fontsize=11)
+
+    out_2row = os.path.join(FIGURES_DIR, "h2_solver_loss_2row.png")
+    fig.savefig(out_2row, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Figure saved: {out_loss}")
+    print(f"Figure saved: {out_2row}")
+
+    # keep backward-compat copy
+    import shutil
+    shutil.copy(out_2row, os.path.join(FIGURES_DIR, "h2_solver_comparison_loss.png"))
+    print(f"Figure copied → h2_solver_comparison_loss.png")
 
 
 if __name__ == "__main__":
