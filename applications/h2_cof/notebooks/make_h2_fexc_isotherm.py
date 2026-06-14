@@ -52,7 +52,7 @@ P_ISO = np.array([1, 5, 10, 20, 40, 60, 80, 100, 120, 150, 200, 250, 300, 400, 4
 
 ADAM_STEPS = 6000
 ADAM_LR    = 2e-3
-N_QUAD     = 8
+N_QUAD     = 4   # 4-pt GL is 8th-order exact; use 8 for publication if GPU available
 
 # GCMC reference from Pramudya & Mendoza-Cortes 2016 (Fig. 3, COF-333-CoCl2, 298 K)
 GCMC_P   = np.array([1, 5, 10, 20, 40, 60, 80, 100, 120, 150, 200, 250, 300, 400, 500])
@@ -166,9 +166,16 @@ def main():
     print("\n── Anderson (reference) ──", flush=True)
     N_and, T_and = run_anderson(vext3d, dV, wda, access, rho_max, dx, dy, dz)
 
-    print(f"\n── Adam / endpoint (lr={ADAM_LR}, n_steps={ADAM_STEPS}) ──", flush=True)
-    N_ep, T_ep = run_adam(vext3d, dV, wda, access, rho_max, dx, dy, dz,
-                          mode="endpoint")
+    ep_cache = RESULTS_DIR / "fexc_isotherm_ep_cache.npz"
+    if ep_cache.exists():
+        _d = np.load(ep_cache)
+        N_ep, T_ep = np.array(_d["N_ep"]), np.array(_d["T_ep"])
+        print("  Adam-endpoint loaded from cache", flush=True)
+    else:
+        print(f"\n── Adam / endpoint (lr={ADAM_LR}, n_steps={ADAM_STEPS}) ──", flush=True)
+        N_ep, T_ep = run_adam(vext3d, dV, wda, access, rho_max, dx, dy, dz,
+                              mode="endpoint")
+        np.savez(ep_cache, N_ep=N_ep, T_ep=T_ep)
 
     print(f"\n── Adam / GL-{N_QUAD}pt quadrature ──", flush=True)
     N_gl, T_gl = run_adam(vext3d, dV, wda, access, rho_max, dx, dy, dz,
