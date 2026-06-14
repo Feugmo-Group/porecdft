@@ -197,11 +197,18 @@ def run_isotherm(metal: str, vext_3d: np.ndarray, dV: float,
         return np.array(d["P"]), np.array(d["N"])
 
     import jax.numpy as jnp
+    from porecdft.solver.picard import picard_solve as _picard_solve
 
-    rho_b0  = H2_PR.bulk_density(1.0, T_K)
-    c1_b0   = float(wda.c1_bulk(rho_b0))
-    rho_max = float(np.exp(-c1_b0) * rho_b0 * 15)
+    # FMT packing-fraction ceiling (η=0.45) — used only for init clipping,
+    # NOT passed to anderson_solve (whose log_clip provides natural regularization).
+    d       = wda.d
+    rho_max = float(0.45 * 6.0 / (np.pi * d**3))
     access  = vext_3d < 50.0 * T_K
+    max_possible = vext_3d.size * rho_max
+
+    def _boltz_init(rho_b: float) -> np.ndarray:
+        exp_arg = np.clip(-vext_3d / T_K, -50.0, 20.0)
+        return np.where(access, np.clip(rho_b * np.exp(exp_arg), 1e-16, rho_max), 1e-16)
 
     # Pre-warm weight cache before JIT loop
     wda._get_weights(vext_3d.shape, dx, dy, dz)
@@ -219,34 +226,42 @@ def run_isotherm(metal: str, vext_3d: np.ndarray, dV: float,
             rho0  = np.where(access,
                              np.clip(rho_prev * scale, 1e-16, rho_max), 1e-16)
         else:
-            exp_arg = np.clip(-vext_3d / T_K, -50.0, 20.0)
-            rho0 = np.where(access,
-                            np.clip(rho_b * np.exp(exp_arg), 1e-16, rho_max),
-                            1e-16)
+            rho0 = _boltz_init(rho_b)
 
         res = anderson_solve(
             rho0, rho_b, vext_3d, T_K, c1_fn, c1_b,
-            m=8, beta=0.1, max_iter=10000, tol=1e-5,
+            m=8, beta=0.1, max_iter=8000, tol=1e-5,
             accessibility_mask=access, safeguard_alpha=0.01,
-            picard_warmup=100, rho_max=rho_max,
+            picard_warmup=100,
         )
         N = float(res.rho.sum() * dV)
 
-        # Monotonicity guard: if N drops >50% reject and re-init from Boltzmann
-        if N_arr and N < 0.5 * N_arr[-1]:
-            print(f"  [{metal}] P={P:.0f} bar: N={N:.1f} failed monotone "
-                  f"(prev={N_arr[-1]:.1f}), re-init from Boltzmann...", flush=True)
-            exp_arg = np.clip(-vext_3d / T_K, -50.0, 20.0)
-            rho0 = np.where(access,
-                            np.clip(rho_b * np.exp(exp_arg), 1e-16, rho_max),
-                            1e-16)
-            res = anderson_solve(
+        # Fallback: Picard from warm-start init when Anderson gives unphysical N
+        if not np.isfinite(N) or N > max_possible or (N_arr and N < 0.5 * N_arr[-1]):
+            print(f"  [{metal}] P={P:.0f} bar: Anderson gave N={N:.1f}, "
+                  f"falling back to slow Picard...", flush=True)
+            pr = _picard_solve(
                 rho0, rho_b, vext_3d, T_K, c1_fn, c1_b,
-                m=8, beta=0.05, max_iter=20000, tol=1e-5,
-                accessibility_mask=access, safeguard_alpha=0.005,
-                picard_warmup=200, rho_max=rho_max,
+                alpha=0.005, max_iter=100000, tol=1e-5,
+                accessibility_mask=access, rho_max=rho_max,
             )
-            N = float(res.rho.sum() * dV)
+            N2 = float(pr.rho.sum() * dV)
+            # If Picard also fails, try fresh Boltzmann init
+            if not np.isfinite(N2) or N2 > max_possible:
+                pr = _picard_solve(
+                    _boltz_init(rho_b), rho_b, vext_3d, T_K, c1_fn, c1_b,
+                    alpha=0.02, max_iter=50000, tol=1e-5,
+                    accessibility_mask=access, rho_max=rho_max,
+                )
+                N2 = float(pr.rho.sum() * dV)
+            N = N2
+            rho_prev = pr.rho
+            rho_prev_b = rho_b
+            N_arr.append(N)
+            t_el = time.perf_counter() - t_start
+            print(f"  [{metal}] P={P:5.0f} bar  N={N:7.2f} mol/uc  "
+                  f"conv=Picard  t={t_el:.0f}s", flush=True)
+            continue
 
         rho_prev, rho_prev_b = res.rho.copy(), rho_b
         N_arr.append(N)
