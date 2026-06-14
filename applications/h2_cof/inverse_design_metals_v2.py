@@ -228,7 +228,7 @@ def run_isotherm(metal: str, vext_3d: np.ndarray, dV: float,
             rho0, rho_b, vext_3d, T_K, c1_fn, c1_b,
             m=8, beta=0.1, max_iter=10000, tol=1e-5,
             accessibility_mask=access, safeguard_alpha=0.01,
-            picard_warmup=100,
+            picard_warmup=100, rho_max=rho_max,
         )
         N = float(res.rho.sum() * dV)
 
@@ -244,7 +244,7 @@ def run_isotherm(metal: str, vext_3d: np.ndarray, dV: float,
                 rho0, rho_b, vext_3d, T_K, c1_fn, c1_b,
                 m=8, beta=0.05, max_iter=20000, tol=1e-5,
                 accessibility_mask=access, safeguard_alpha=0.005,
-                picard_warmup=200,
+                picard_warmup=200, rho_max=rho_max,
             )
             N = float(res.rho.sum() * dV)
 
