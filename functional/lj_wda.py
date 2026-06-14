@@ -137,6 +137,10 @@ class LJWDAFunctional:
         dx: float,
         dy: float,
         dz: float,
+        w2_hat: jnp.ndarray,
+        w3_hat: jnp.ndarray,
+        w2vec_hat: jnp.ndarray,
+        w_hat: jnp.ndarray,
     ) -> jnp.ndarray:
         """Total c¹(r) = c¹_HS(r) + c¹_att(r).
 
@@ -153,7 +157,7 @@ class LJWDAFunctional:
             Total direct correlation function field (dimensionless).
         """
         shape = rho.shape
-        w2_hat, w3_hat, w2vec_hat, w_hat = self._get_weights(shape, dx, dy, dz)
+        # w2_hat, w3_hat, w2vec_hat, w_hat = self._get_weights(shape, dx, dy, dz)
 
         # Hard-sphere part (aWBII)
         wd = compute_weighted_densities(rho, w2_hat, w3_hat, w2vec_hat, self.d)

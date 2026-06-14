@@ -79,6 +79,37 @@ class JaxSolverResult:
     omega_history: list[float]
     error_history: list[float]
 
+def F_ex_quadrature(rho: jnp.ndarray,
+                    c1_callable: Callable[[jnp.ndarray], jnp.ndarray],
+                    c1_bulk: float,
+                    dV: float,
+                    n_quad: int = 8,
+                    ):
+    """
+    calculate excess free energy functional from quadrature rule
+    """
+    def integrant(l):
+        rho_l = l * rho
+        # avoid singularites ate rho=0
+        rho_l = jax.lax.cond(
+                 jnp.allclose(rho_l, jnp.zeros_like(rho)),
+                 lambda _: rho_l + 1e-12,
+                 lambda _: rho_l,
+                operand=None
+                )
+        c1 = c1_callable(rho_l)
+        return jnp.sum((-c1 + c1_bulk) * rho) * dV
+
+    grids, wts = np.polynomial.legendre.leggauss(n_quad) # calcuate Legendre quadrature weights
+    # transform to the range [0, 1]
+    a, b = 0.0, 1.0
+    grids = 0.5 * (b - a) * grids + 0.5 * (a + b)
+    wts = 0.5 * (b - a) * wts
+    # convert to jnp array
+    grids = jnp.asarray(grids)
+    wts = jnp.asarray(wts)
+    vals = jax.vmap(integrant)(grids)
+    return jnp.sum(wts*vals)
 
 # ── Grand potential (pure JAX, differentiable) ───────────────────────────────
 
@@ -91,6 +122,7 @@ def grand_potential_jax(
     c1_bulk: float,
     dV: float,
     accessibility_mask: jnp.ndarray | None = None,
+    quadrature: bool = False
 ) -> jnp.ndarray:
     """Grand potential Ω[exp(ψ)] as a differentiable JAX scalar (K·Å³ / k_B).
 
@@ -117,9 +149,14 @@ def grand_potential_jax(
     # which (with β·Vext term) gives EL ρ* = ρ_bulk·exp(−β·V_ext).
     # No T factor here — all three terms are in units of kBT so gradients balance.
     f_id = jnp.sum(rho * (log_rho - log_rho_bulk - 1.0)) * dV
-    # Excess: ∫ (−c¹(ρ) + c¹_bulk) ρ dV
-    c1 = c1_callable(rho)
-    f_exc = jnp.sum((-c1 + c1_bulk) * rho) * dV
+    if quadrature:
+        f_exc = F_ex_quadrature(rho, c1_callable, c1_bulk, dV)
+
+    else:
+        # Excess: ∫ (−c¹(ρ) + c¹_bulk) ρ dV
+        c1 = c1_callable(rho)
+        f_exc = jnp.sum((-c1 + c1_bulk) * rho) * dV
+
     # External field: β ∫ V_ext ρ dV
     f_ext = jnp.sum(beta * Vext_K * rho) * dV
 
@@ -156,6 +193,7 @@ def _make_solver_class():
         tol: float = eqx.field(static=True)
         log_clip: float = eqx.field(static=True)
         print_every: int = eqx.field(static=True)
+        quadrature: bool = eqx.field(static=True)
 
         def __init__(
             self,
@@ -164,12 +202,14 @@ def _make_solver_class():
             tol: float = 1e-5,
             log_clip: float = 25.0,
             print_every: int = 0,
+            quadrature: bool = False,
         ):
             self.optimizer = optimizer if optimizer is not None else _optax.adam(5e-3)
             self.n_steps = n_steps
             self.tol = tol
             self.log_clip = log_clip
             self.print_every = print_every
+            self.quadrature = quadrature
 
         def solve(
             self,
@@ -183,6 +223,7 @@ def _make_solver_class():
             accessibility_mask: np.ndarray | None = None,
         ) -> JaxSolverResult:
             """Run the minimisation and return a JaxSolverResult."""
+            quadrature = self.quadrature
             log_rho_bulk = float(np.log(rho_bulk + 1e-300))
             lo = log_rho_bulk - self.log_clip
             hi = log_rho_bulk + self.log_clip
@@ -205,7 +246,7 @@ def _make_solver_class():
             def omega_fn(lr):
                 return grand_potential_jax(
                     lr, rho_bulk, Vext_j, temperature_K,
-                    c1_callable, c1_bulk, dV, mask_j,
+                    c1_callable, c1_bulk, dV, mask_j, quadrature
                 )
 
             @jax.jit
@@ -247,6 +288,9 @@ def _make_solver_class():
                 ):
                     print(f"  step {i:4d}  Ω = {omega_f:.6g}  "
                           f"|ΔΩ|/|Ω| = {rel_delta:.2e}")
+                if not jnp.isfinite(omega_f):
+                    print("Warning: grand potential diverges!")
+                    break
 
                 if i >= min_iters and rel_delta < self.tol:
                     small_step_streak += 1
@@ -291,6 +335,7 @@ def jax_solve(
     accessibility_mask: np.ndarray | None = None,
     log_clip: float = 25.0,
     print_every: int = 0,
+    quadrature: bool = False,
 ) -> JaxSolverResult:
     """Convenience wrapper: create a GrandPotentialSolver and call .solve().
 
@@ -314,6 +359,7 @@ def jax_solve(
         tol=tol,
         log_clip=log_clip,
         print_every=print_every,
+        quadrature = quadrature
     )
     return solver.solve(
         rho_init, rho_bulk, Vext_K, temperature_K,
