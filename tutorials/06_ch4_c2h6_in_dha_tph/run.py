@@ -112,7 +112,10 @@ def single_gas_isotherm(name: str, host, host_ff, P_arr):
 
     Vext_K = vd["vext_avg"]
     dV     = float(vd["dV"])
-    access = np.isfinite(Vext_K) & (Vext_K < 50.0 * T_K)
+    # Exclude strongly repulsive voxels (V > 5 kT) from the convergence mask.
+    # At these sites ρ ≈ 0 and the hard-chain c¹ ≈ (m−1)·ln(ρ) → −∞,
+    # creating huge EL residuals that prevent convergence without affecting N.
+    access = np.isfinite(Vext_K) & (Vext_K < 5.0 * T_K)
     Nx, Ny, Nz = Vext_K.shape
     Lx, Ly, Lz = np.linalg.norm(host.lattice, axis=1)
     KX, KY, KZ, K = make_k_grid((Nx, Ny, Nz), dx=Lx/Nx, dy=Ly/Ny, dz=Lz/Nz)
@@ -138,10 +141,20 @@ def single_gas_isotherm(name: str, host, host_ff, P_arr):
                                          w_lambd_hat, w_zeta3_hat))
         return c1_fmt + c1_dc
 
+    # For chain molecules Stierle 2024 uses segment-based ideal gas entropy,
+    # giving EL: ln(ρ/ρ_b) = (c¹ − c¹_b − β·V) / m.  Implemented by passing
+    # Vext/m and c¹/m to the standard EL solver (equivalent reformulation).
+    # For m=1 (methane), _inv_m=1 so this is a no-op.
+    _inv_m = 1.0 / m_chain
+
+    def c1_fn_eff(rho, _fn=c1_fn, _inv=_inv_m):
+        return _fn(rho) * _inv
+
     N_per_uc = np.empty(len(P_arr))
     rho_prev = None
     rho_prev_b = None
-    print(f"  {'P (bar)':>10}  {'N/uc':>8}")
+    print(f"\n  m={m_chain:.4f}  d={sigma_hs:.4f} A  inv_m={_inv_m:.4f}")
+    print(f"  {'P (bar)':>10}  {'N/uc':>8}  {'conv':>5}  {'iters':>6}")
     for i, P in enumerate(P_arr):
         rho_b = float(eos.bulk_density(P, T_K))
         # Bulk c1 with the m-scaled FMT (consistent with c1_fn above).
@@ -153,22 +166,27 @@ def single_gas_isotherm(name: str, host, host_ff, P_arr):
         else:
             rho0 = np.minimum(rho_b * np.exp(np.clip(-Vext_K / T_K, -50, 20)) * access,
                               RHO_MAX)
-        # Chain fluids (m > 1) have a strongly density-dependent c¹ that
-        # overshoots Anderson if the step is too large. Use a much smaller
-        # step_clip and a longer Picard warm-up for ethane (m = 1.61).
-        is_chain = m_chain > 1.1
-        res = anderson_solve(rho0, rho_b, Vext_K, T_K, c1_fn, c1_b,
-                             m=6, beta=0.15 if is_chain else 0.3,
-                             max_iter=2000 if is_chain else 800,
-                             tol=1e-4, accessibility_mask=access,
-                             log_clip=12.0 if is_chain else 25.0,
-                             safeguard_alpha=0.01 if is_chain else 0.02,
-                             picard_warmup=300 if is_chain else 30,
-                             step_clip=0.5 if is_chain else 2.0,
-                             rho_max=RHO_MAX)
+        # Conservative parameters work for both m=1 (CH4) and m>1 (C2H6).
+        # float32 PC-SAFT caps achievable tolerance at ~0.1 in log-density space;
+        # step_clip=0.5 and picard_warmup=100 prevent oscillations at high density.
+        res = anderson_solve(
+            rho0, rho_b,
+            Vext_K * _inv_m, T_K,   # effective Vext/m for segment-based EL
+            c1_fn_eff,               # effective c¹/m
+            c1_b * _inv_m,           # effective bulk c¹/m
+            m=6,
+            beta=0.15,
+            max_iter=2000,
+            tol=0.1,
+            accessibility_mask=access,
+            log_clip=15.0,
+            safeguard_alpha=0.02,
+            picard_warmup=100,
+            step_clip=0.5,
+            rho_max=RHO_MAX)
         rho_prev, rho_prev_b = res.rho.copy(), rho_b
         N_per_uc[i] = float(res.rho.sum() * dV)
-        print(f"  {P:10.3f}  {N_per_uc[i]:8.3f}")
+        print(f"  {P:10.3f}  {N_per_uc[i]:8.3f}  {str(res.converged):>5}  {res.iterations:>6}")
     return N_per_uc
 
 
@@ -250,7 +268,8 @@ def main():
     ax.grid(alpha=0.3, ls=":")
     ax.legend(loc="upper left", fontsize=11, framealpha=0.95)
     ax.set_xlim(0, 50)
-    ax.set_ylim(0, max(q_c2h6_mix.max(), q_c2h6.max()) * 1.2)
+    gcmc_max = max(max(GCMC_REF["C2H6"]["N"]), max(GCMC_REF["CH4"]["N"]))
+    ax.set_ylim(0, max(q_c2h6_mix.max(), q_c2h6.max(), gcmc_max) * 1.1)
 
     out = FIG_DIR / "06_ch4_c2h6_in_dha_tph.png"
     fig.savefig(out, dpi=180, bbox_inches="tight")
