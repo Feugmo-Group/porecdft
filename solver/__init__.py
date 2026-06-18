@@ -6,8 +6,10 @@ picard_solve      — classical Picard mixing, NumPy, no extra deps.
 anderson_solve    — Anderson-accelerated fixed-point, NumPy, no extra deps.
 jax_solve         — Ω minimisation via any optax optimizer (Adam, SGD, …).
                     Requires: equinox, optax.
-fire2_solve       — Ω minimisation via NonlinearCG (Polak-Ribières).
-                    Requires: jax, optimistix.
+fire2_solve       — Ω minimisation via NonlinearCG (Polak-Ribières) or Python PR+CG.
+                    Requires: jax, optimistix (fast path).
+fire2_solve_scan  — lax.scan gradient descent; populates per-step loss history.
+                    Requires: jax.
 
 All solvers share the same functional interface::
 
@@ -30,6 +32,7 @@ from porecdft.solver.jax_solver import (
 )
 from porecdft.solver.fire2 import (
     fire2_solve,
+    fire2_solve_scan,
     FIRE2Result,
     FIRE2Solver,
     OPTX_AVAILABLE,
@@ -47,6 +50,7 @@ __all__ = [
     "OPTAX_AVAILABLE",
     "EQX_AVAILABLE",
     "fire2_solve",
+    "fire2_solve_scan",
     "FIRE2Result",
     "FIRE2Solver",
     "OPTX_AVAILABLE",

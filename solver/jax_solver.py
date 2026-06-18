@@ -54,6 +54,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from porecdft.solver.fire2 import FExcMode, _gl_nodes  # shared helpers
+
 try:
     import equinox as eqx            # type: ignore[import]
     EQX_AVAILABLE = True
@@ -91,6 +93,8 @@ def grand_potential_jax(
     c1_bulk: float,
     dV: float,
     accessibility_mask: jnp.ndarray | None = None,
+    f_exc_mode: FExcMode = "endpoint",
+    n_quad: int = 4,
 ) -> jnp.ndarray:
     """Grand potential Ω[exp(ψ)] as a differentiable JAX scalar (K·Å³ / k_B).
 
@@ -104,6 +108,10 @@ def grand_potential_jax(
         c¹(ρ) → array same shape as ρ.  Must use jnp ops.
     accessibility_mask : bool array, optional
         Inaccessible voxels are excluded from Ω.
+    f_exc_mode : ``"endpoint"`` | ``"rpa"`` | ``"quadrature"``
+        Approximation for F_ex (see fire2.py module docstring).
+    n_quad : int
+        Gauss-Legendre points (only for ``"quadrature"`` mode).
     """
     rho = jnp.exp(log_rho)
     beta = 1.0 / temperature_K
@@ -112,16 +120,25 @@ def grand_potential_jax(
     if accessibility_mask is not None:
         rho = jnp.where(accessibility_mask, rho, 0.0)
 
-    # Ideal part in kBT units: ∫ ρ (ψ − log ρ_bulk − 1) dV
-    # −1 is essential: d/dρ [ρ(ln ρ − ln ρ_bulk − 1)] = ln ρ − ln ρ_bulk,
-    # which (with β·Vext term) gives EL ρ* = ρ_bulk·exp(−β·V_ext).
-    # No T factor here — all three terms are in units of kBT so gradients balance.
+    # Ideal part: ∫ ρ (ψ − log ρ_bulk − 1) dV  (all terms in kBT units)
     f_id = jnp.sum(rho * (log_rho - log_rho_bulk - 1.0)) * dV
-    # Excess: ∫ (−c¹(ρ) + c¹_bulk) ρ dV
-    c1 = c1_callable(rho)
-    f_exc = jnp.sum((-c1 + c1_bulk) * rho) * dV
     # External field: β ∫ V_ext ρ dV
     f_ext = jnp.sum(beta * Vext_K * rho) * dV
+
+    if f_exc_mode == "endpoint":
+        c1 = c1_callable(rho)
+        f_exc = jnp.sum((-c1 + c1_bulk) * rho) * dV
+
+    elif f_exc_mode == "rpa":
+        c1 = c1_callable(rho)
+        f_exc = 0.5 * jnp.sum((-c1 + c1_bulk) * rho) * dV
+
+    else:  # "quadrature"
+        lam_nodes, lam_weights = _gl_nodes(n_quad)
+        f_exc = jnp.zeros(())
+        for lam_i, w_i in zip(lam_nodes, lam_weights):
+            c1_lam = c1_callable(jnp.asarray(lam_i) * rho)
+            f_exc = f_exc + w_i * jnp.sum((-c1_lam + c1_bulk) * rho) * dV
 
     return f_id + f_exc + f_ext
 
@@ -181,6 +198,8 @@ def _make_solver_class():
             c1_bulk: float,
             dV: float = 1.0,
             accessibility_mask: np.ndarray | None = None,
+            f_exc_mode: FExcMode = "endpoint",
+            n_quad: int = 4,
         ) -> JaxSolverResult:
             """Run the minimisation and return a JaxSolverResult."""
             log_rho_bulk = float(np.log(rho_bulk + 1e-300))
@@ -206,6 +225,7 @@ def _make_solver_class():
                 return grand_potential_jax(
                     lr, rho_bulk, Vext_j, temperature_K,
                     c1_callable, c1_bulk, dV, mask_j,
+                    f_exc_mode=f_exc_mode, n_quad=n_quad,
                 )
 
             @jax.jit
@@ -291,6 +311,8 @@ def jax_solve(
     accessibility_mask: np.ndarray | None = None,
     log_clip: float = 25.0,
     print_every: int = 0,
+    f_exc_mode: FExcMode = "endpoint",
+    n_quad: int = 4,
 ) -> JaxSolverResult:
     """Convenience wrapper: create a GrandPotentialSolver and call .solve().
 
@@ -319,4 +341,6 @@ def jax_solve(
         rho_init, rho_bulk, Vext_K, temperature_K,
         c1_callable, c1_bulk, dV,
         accessibility_mask=accessibility_mask,
+        f_exc_mode=f_exc_mode,
+        n_quad=n_quad,
     )

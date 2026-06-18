@@ -1,0 +1,9 @@
+# @package _global_.run
+temperature_K: 77.0
+p_min_bar:     1.0e-4
+p_max_bar:     1.0
+n_pressure:    16
+p_log_space:   true
+save_figure:   true
+figure_dpi:    180
+experiment:    tutorial_01_ar_zif8_77K

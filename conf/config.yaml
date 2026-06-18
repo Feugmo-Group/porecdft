@@ -1,0 +1,45 @@
+# porecdft top-level Hydra config.
+#
+# Config groups (each picks one YAML from conf/<group>/):
+#   compute : cpu_float64 | cuda_float32 | cuda_float64
+#   vext    : default | fast
+#   solver  : anderson | fire2
+#   run     : default | cryogenic
+#   fluid   : methane | ethane | co2 | argon | n2
+#   host    : dha_tph | zif8 | dha_cof
+#
+# CLI examples:
+#   # switch to GPU
+#   python run.py compute=cuda_float32
+#
+#   # coarse grid, fire2 solver, nitrogen, ZIF-8
+#   python run.py vext=fast solver=fire2 fluid=n2 host=zif8
+#
+#   # change single values without swapping the whole group
+#   python run.py run.temperature_K=77 run.experiment=ar_zif8_77K
+#   python run.py vext.n_orient=200 solver.tol=0.05
+
+defaults:
+  - compute: cpu_float64
+  - vext:    default
+  - solver:  anderson
+  - run:     default
+  - fluid:   methane
+  - host:    dha_tph
+  - _self_
+
+# ── Hydra output directory ────────────────────────────────────────────────
+# Every run is isolated under outputs/<experiment>/<YYYY-MM-DD>/<HH-MM-SS>/
+# That folder will contain:
+#   .hydra/         full config + overrides (reproducibility)
+#   vext_*.npy      Vext checkpoint (skipped if already exists)
+#   isotherm.npz    N(P) arrays + rho fields
+#   *.png           figures
+hydra:
+  run:
+    dir: outputs/${run.experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir:    outputs/${run.experiment}/multirun/${now:%Y-%m-%d}
+    subdir: ${hydra.job.override_dirname}
+  job:
+    chdir: false   # keep cwd = project root so relative paths work

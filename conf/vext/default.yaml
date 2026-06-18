@@ -1,0 +1,8 @@
+# @package _global_.vext
+spacing:          0.5     # Å — grid resolution (0.5 production, 1.0 fast)
+pbc_supercell:    [3, 3, 3]
+n_orient:         20      # Fibonacci sphere orientations (≥200 for tight pockets)
+averaging:        boltzmann
+v_reject_below_K: -10000.0
+v_cap_above_K:    5000.0
+access_factor:    5.0     # voxels with V > access_factor*T_K are masked
