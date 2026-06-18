@@ -185,13 +185,17 @@ def _build_coulomb_kernel():
         for s in range(n_sites):
             pos = grid + site_offset[s]
             qs = site_q[s]
+            if qs == 0.0:
+                continue
             for a in range(Na):
                 dr = host_pos[a] - pos
                 r2 = wp.dot(dr, dr)
                 if r2 > 0.0 and r2 < cutoff2:
                     r = wp.sqrt(r2)
-                    erf_arg = r / sigma_eff
-                    v_total = v_total + prefactor_K * qs * host_q[a] / r * wp.erf(erf_arg)
+                else:
+                    r = 1.0
+                erf_arg = r / sigma_eff
+                v_total = v_total + prefactor_K * qs * host_q[a] / r * wp.erf(erf_arg)
         out[g] = out[g] + v_total
 
     _COULOMB_KERNEL = smeared_coulomb_grid_kernel
@@ -325,6 +329,69 @@ def lj_vext_grid_warp(
               inputs=[wp_grid, S, wp_site, wp_host,
                       wp_sigma, wp_eps, wp_active,
                       float(cutoff * cutoff)],
+              outputs=[wp_out], device=device)
+    return wp_out.numpy()
+
+def coulomb_vext_grid_warp(
+    grid_xyz, 
+    site_offset, 
+    site_q,
+    host_pos,
+    host_q,  
+    sigma_eff,
+    prefactor_K,
+    cutoff, 
+    out=None,
+):    
+    """Compute Coulomb V_ext on a 3D grid for one orientation via Warp.
+
+    See :func:`_build_lj_kernel` for the underlying kernel.
+
+    Parameters
+    ----------
+    grid_xyz : (Ng, 3) array
+    site_offset : (S, 3) array — already-rotated fluid-site lab offsets
+    site_q, (S,) fluid-site charges (e)
+    host_pos : (Na, 3) array
+    host_q: (Na) host-site cÅharges(e)
+    sigma_ff : float σ_eff (√2 σ) in Å
+    prefactor_K: float
+    cutoff : float, 
+    out : optional (Ng,) array — accumulated in-place if given, else zero-init.
+
+    Returns
+    -------
+    (Ng,) numpy or JAX array — V_ext contribution from LJ, in K.
+    """
+    if not WARP_AVAILABLE:
+        raise RuntimeError("warp-lang not installed.")
+    import numpy as np
+    import warp as wp
+    wk, _ = _build_coulomb_kernel()
+    Ng = grid_xyz.shape[0]
+    S = site_offset.shape[0]
+
+    gp  = np.ascontiguousarray(np.asarray(grid_xyz,    dtype=np.float32).reshape(-1, 3))
+    so  = np.ascontiguousarray(np.asarray(site_offset, dtype=np.float32).reshape(-1, 3))
+    hp  = np.ascontiguousarray(np.asarray(host_pos,    dtype=np.float32).reshape(-1, 3))
+    siteq = np.ascontiguousarray(np.asarray(site_q,    dtype=np.float32))
+    hostq = np.ascontiguousarray(np.asarray(host_q,  dtype=np.float32))
+    if out is None:
+        out_np = np.zeros(Ng, dtype=np.float32)
+    else:
+        out_np = np.ascontiguousarray(np.asarray(out, dtype=np.float32))
+
+    device = "cpu"
+    wp_grid    = wp.array(gp,  dtype=wp.vec3,    device=device)
+    wp_site    = wp.array(so,  dtype=wp.vec3,    device=device)
+    wp_host    = wp.array(hp,  dtype=wp.vec3,    device=device)
+    wp_siteq   = wp.array(siteq, dtype=wp.float32, device=device)
+    wp_hostq     = wp.array(hostq, dtype=wp.float32, device=device)
+    wp_out     = wp.array(out_np, dtype=wp.float32, device=device)
+
+    wp.launch(wk, dim=Ng,
+              inputs=[wp_grid, S, wp_site, wp_siteq, wp_host, wp_hostq, 
+                      float(sigma_eff), float(cutoff * cutoff), float(prefactor_K)],
               outputs=[wp_out], device=device)
     return wp_out.numpy()
 
