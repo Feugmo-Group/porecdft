@@ -22,6 +22,7 @@ from typing import Iterable
 
 import numpy as np
 
+from porecdft.compute_config import ComputeConfig
 from porecdft.fluid.base import Fluid
 from porecdft.forcefield.base import Potential
 from porecdft.structure.host import HostAtoms
@@ -115,6 +116,8 @@ def build_vext_on_grid(
     v_reject_below_K: float | None = -10000.0,       # reject (orient, voxel) pairs with V < this
     v_cap_above_K: float | None = 5000.0,            # cap per-orient V from above before averaging
     averaging: str = "boltzmann",                     # "boltzmann" (free energy) or "arithmetic"
+    compute: ComputeConfig | None = None,
+    # --- deprecated individual params (kept for backward compat) ---
     use_warp: bool = False,
     warp_device: str = "cpu",
     dtype: type = np.float64,
@@ -149,19 +152,22 @@ def build_vext_on_grid(
     cache_path : str or Path, optional
         If given and the file exists, load it instead of recomputing. After
         computation, save the result there.
+    compute : ComputeConfig, optional
+        Global backend config (preferred).  Supplies ``use_warp``,
+        ``warp_device``, and ``dtype`` in one object.  Build it from
+        ``conf/compute.yaml`` via ``ComputeConfig.from_omegaconf(cfg.compute)``
+        so that a single Hydra CLI flag (e.g.
+        ``compute.warp_device=cuda:0 compute.use_warp=true``) switches the
+        entire run — Vext Warp kernels, JAX functional FFTs, and the solver.
+        When *compute* is given, the individual *use_warp*, *warp_device*, and
+        *dtype* kwargs are ignored.
     use_warp : bool
-        If True and warp-lang is installed, accelerate the LJ kernel via NVIDIA
-        Warp.  Non-LJ components (Coulomb, Morse, …) still run on NumPy.
-        Ignored gracefully when warp-lang is absent.
+        Deprecated — pass a :class:`~porecdft.compute_config.ComputeConfig`
+        via *compute* instead.  Ignored when *compute* is provided.
     warp_device : str
-        Warp device string, e.g. ``"cpu"`` or ``"cuda:0"``.  Controlled via a
-        Hydra / OmegaConf config flag so a single YAML change switches the
-        backend at run time.
+        Deprecated — see *compute*.
     dtype : numpy dtype
-        Floating-point precision for the accumulation arrays.  Default
-        ``np.float64``.  Pass ``np.float32`` for reduced memory / faster
-        host-side sorting.  The Warp kernels always compute in float32
-        internally; their output is cast to ``dtype`` before storing.
+        Deprecated — see *compute*.  Default ``np.float64``.
 
     Returns
     -------
@@ -174,6 +180,16 @@ def build_vext_on_grid(
         if cache_path.exists():
             data = np.load(cache_path, allow_pickle=True).item()
             return data
+
+    # Resolve compute settings: ComputeConfig takes precedence over individual kwargs.
+    if compute is not None:
+        _use_warp   = compute.use_warp
+        _warp_device = compute.warp_device
+        _dtype      = compute.np_dtype
+    else:
+        _use_warp    = use_warp
+        _warp_device = warp_device
+        _dtype       = dtype
 
     # Build replicated host once
     n_a, n_b, n_c = pbc_supercell
@@ -197,7 +213,7 @@ def build_vext_on_grid(
     _use_warp_path = False
     _lj_warp_arrays = None
     _non_lj_comps: list = []
-    if use_warp:
+    if _use_warp:
         try:
             from porecdft.warp_backend import WARP_AVAILABLE
             from porecdft.warp_backend.vext_kernels import lj_vext_grid_warp
@@ -218,9 +234,9 @@ def build_vext_on_grid(
 
     # Compute Vext(r, Ω) — memory-friendly: loop over orientations, vector over grid.
     import sys, time
-    all_v = np.empty((Norient, Ng), dtype=dtype)
+    all_v = np.empty((Norient, Ng), dtype=_dtype)
     print(f"    Vext build: grid {shape} ({Ng} pts), {host_super.n_atoms} host atoms, "
-          f"{Norient} orientations  [warp={_use_warp_path}, dtype={np.dtype(dtype).name}]",
+          f"{Norient} orientations  [warp={_use_warp_path}, dtype={np.dtype(_dtype).name}]",
           flush=True)
     t0 = time.time()
     for k, rot in enumerate(orientations):
@@ -232,20 +248,20 @@ def build_vext_on_grid(
             v_k = lj_vext_grid_warp(
                 _grid_xyz_f32, site_offset_lab, _host_pos_f32,
                 sigma_ij, epsilon_ij, active_mask, lj_cutoff,
-                device=warp_device,
-            ).astype(dtype)
+                device=_warp_device,
+            ).astype(_dtype)
             for comp in _non_lj_comps:
                 v_k = v_k + np.asarray(
                     comp.energy_grid(grid_xyz, rot, host_super,
                                      fluid.body_sites, fluid.site_labels),
-                    dtype=dtype,
+                    dtype=_dtype,
                 )
         else:
             v_k = np.asarray(
                 potential.energy_grid(
                     grid_xyz, rot, host_super, fluid.body_sites, fluid.site_labels
                 ),
-                dtype=dtype,
+                dtype=_dtype,
             )
         # Reject (orient, voxel) pairs with unphysically deep V — they come from
         # rigid EPM2 sites accidentally landing on top of framework atoms in
