@@ -15,6 +15,7 @@ The package is host-agnostic and fluid-agnostic. Any analytic or machine-learnin
 - [Key physics: the grand-potential functional](#key-physics-the-grand-potential-functional)
 - [Solvers](#solvers)
 - [Quick start](#quick-start)
+- [Configuration system](#configuration-system)
 - [Package layout](#package-layout)
 - [Equations of state](#equations-of-state)
 - [Systems tested](#systems-tested)
@@ -260,10 +261,114 @@ for P in pressures:
 
 ---
 
+## Configuration system
+
+All run-time parameters — grid resolution, solver settings, temperature, pressure range, fluid, host, and compute backend — are declared in typed dataclasses (`conf_schema.py`) and stored in YAML files under `conf/`. [Hydra](https://hydra.cc) composes these at startup, validates every field, and saves a complete config snapshot alongside each run's outputs.
+
+### Config tree
+
+```
+conf/
+  config.yaml          ← top-level composer
+  compute/
+    cpu_float64.yaml   ← default: CPU, float64, no Warp
+    cuda_float32.yaml  ← GPU: CUDA, float32, Warp on cuda:0
+    cuda_float64.yaml  ← GPU: CUDA, float64
+  vext/
+    default.yaml       ← 0.5 Å grid, 20 orientations
+    fast.yaml          ← 1.0 Å grid, 10 orientations (for parameter sweeps)
+  solver/
+    anderson.yaml      ← Anderson mixing (production default)
+    fire2.yaml         ← FIRE2 inertial relaxation
+  run/
+    default.yaml       ← 298 K, 0.1–50 bar
+    cryogenic.yaml     ← 77 K, 10⁻⁴–1 bar
+  fluid/
+    methane.yaml  ethane.yaml  co2.yaml  argon.yaml  n2.yaml
+  host/
+    dha_tph.yaml  zif8.yaml  dha_cof.yaml
+```
+
+### Experiment tracking
+
+Every run is written to an isolated, timestamped directory:
+
+```
+outputs/<experiment>/<YYYY-MM-DD>/<HH-MM-SS>/
+  .hydra/config.yaml      ← full resolved config (reproducible)
+  .hydra/overrides.yaml   ← only what changed from defaults
+  vext_methane_298K.npy   ← Vext grid checkpoint (reused on re-run)
+  isotherm.npz            ← N(P) arrays + converged density fields
+  06_ch4_c2h6_in_dha_tph.png
+```
+
+The `.hydra/` folder is Hydra's built-in reproducibility record. Re-running with the same `config.yaml` and `overrides.yaml` reproduces the exact result. The Vext `.npy` checkpoint is reused across runs at the same conditions, so only the solver step is repeated when you change solver parameters.
+
+### CLI usage
+
+Hydra-enabled run scripts (e.g. `run_hydra.py`) accept any config key as a CLI override — no file editing required.
+
+```bash
+# defaults (CPU, 298 K, methane, Dha-Tph)
+python tutorials/06_ch4_c2h6_in_dha_tph/run_hydra.py
+
+# switch to GPU with one flag
+python run_hydra.py compute=cuda_float32
+
+# coarse grid + FIRE2 solver for a quick parameter scan
+python run_hydra.py vext=fast solver=fire2 \
+                    run.experiment=quick_scan
+
+# cryogenic Ar/ZIF-8
+python run_hydra.py run=cryogenic fluid=argon host=zif8 \
+                    run.experiment=ar_zif8_77K
+
+# change single values without swapping the whole group
+python run_hydra.py run.temperature_K=350 vext.n_orient=200 \
+                    solver.tol=0.05 run.experiment=T350_fine
+
+# Hydra multirun — one subfolder per temperature
+python run_hydra.py --multirun \
+    run.temperature_K=298,350,400 \
+    run.experiment=T_sweep
+```
+
+### `ComputeConfig` — global backend object
+
+`ComputeConfig` is built from the `compute` config group and passed to every compute function so that one YAML flag switches the entire pipeline — Vext Warp kernels, JAX FFT device, and NumPy array dtype simultaneously.
+
+```python
+from porecdft.compute_config import ComputeConfig
+
+# From a Hydra DictConfig
+compute = ComputeConfig.from_omegaconf(cfg.compute)
+compute.apply_jax_device()   # sets JAX global device once (FMT/aWBII FFTs + solver)
+compute.enable_jax_x64()     # optional: float64 in JAX (requires JAX_ENABLE_X64)
+
+# Convenience factories
+compute = ComputeConfig.cpu_float64()    # development default
+compute = ComputeConfig.cuda_float32()  # production GPU
+
+# Pass to any compute function
+vext = build_vext_on_grid(..., compute=compute)
+```
+
+| Attribute | Effect |
+|-----------|--------|
+| `use_warp` | Enable Warp GPU kernels for Vext (LJ, Coulomb, Morse, Boltzmann avg) |
+| `warp_device` | `"cpu"` or `"cuda:0"` — passed to every `wp.launch` call |
+| `jax_device` | `"cpu"` / `"gpu"` / `"tpu"` — set via `apply_jax_device()` once at startup |
+| `dtype` | `"float64"` (default) or `"float32"` — NumPy accumulation + Warp output cast |
+
+---
+
 ## Package layout
 
 ```
 porecdft/
+  conf/           Hydra YAML config groups (compute, vext, solver, run, fluid, host)
+  conf_schema.py  Typed dataclasses for all config groups + ConfigStore registration
+  compute_config.py  ComputeConfig — global backend object (Warp + JAX + dtype)
   io/             CIF, force-field CSV, and partial-charge readers
   structure/      HostAtoms, supercell builder, pore-volume probes, site finders
   forcefield/     Potential ABC + LJ, Morse, Coulomb, quadrupole-EFG,
@@ -282,7 +387,14 @@ applications/
   alf_co2/        CO₂ in aluminum formate (ALF) — paper figures
   h2_cof/         H₂ in metalated COFs
   eos_compare/    Multi-EOS bulk-density comparison
-  tutorials/      Step-by-step notebooks
+
+tutorials/
+  01_argon_in_zif8/        run.py · run_hydra.py
+  02_methane_in_mfi/
+  03_co2_in_dha_cof/
+  04_xe_kr_in_zif8/
+  05_co2_n2_in_zif8/
+  06_ch4_c2h6_in_dha_tph/  run.py · run_hydra.py
 ```
 
 ---
@@ -335,7 +447,25 @@ print(H2_FH.bulk_density(1.0,  77.0))   # quantum-corrected H₂ at 77 K
 
 ## GPU acceleration
 
-Optional NVIDIA Warp kernels for the three largest 3D hot paths. Install with `uv sync --extra gpu`. Falls back to CPU NumPy when `warp-lang` is absent.
+Install the GPU extras once:
+
+```bash
+uv sync --extra gpu   # CUDA JAX + optax + warp-lang
+```
+
+Everything falls back to CPU NumPy / JAX-CPU when the GPU extras are absent — no code changes needed.
+
+### What runs where
+
+| Layer | Technology | Device control |
+|-------|-----------|----------------|
+| Vext LJ / Coulomb / Morse kernels | NVIDIA Warp | `compute.warp_device` |
+| Boltzmann orientation average | NVIDIA Warp | `compute.warp_device` |
+| FMT / aWBII FFT convolutions | JAX / XLA (cuFFT) | `compute.jax_device` via `apply_jax_device()` |
+| PC-SAFT functional | JAX / XLA | same |
+| Anderson / FIRE2 / Adam solver | JAX / XLA | same |
+
+### Warp kernels (`warp_backend/`)
 
 | Kernel | Replaces | Expected speedup |
 |--------|---------|-----------------|
@@ -344,6 +474,27 @@ Optional NVIDIA Warp kernels for the three largest 3D hot paths. Install with `u
 | `smeared_coulomb_grid_kernel` | `CoulombPotential.energy_grid` per-orientation | 10–100× |
 | `boltzmann_orient_avg_kernel` | orientation reduction in `vext/builder.py` | 5–20× |
 | `rho_bar_sphere_kernel` | `WertheimAssociation._rho_bar_all` | 20–50× |
+
+### Switching to GPU
+
+The entire pipeline — Vext Warp kernels + JAX FFTs + solver — moves to GPU with a single CLI flag:
+
+```bash
+python run_hydra.py compute=cuda_float32
+```
+
+Or in code:
+
+```python
+from porecdft.compute_config import ComputeConfig
+
+compute = ComputeConfig.cuda_float32()
+compute.apply_jax_device()   # JAX FFTs now use cuFFT
+
+vext = build_vext_on_grid(..., compute=compute)
+```
+
+See the [Configuration system](#configuration-system) section for the full `ComputeConfig` API and YAML layout.
 
 ---
 
