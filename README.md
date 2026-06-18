@@ -30,19 +30,32 @@ The package is host-agnostic and fluid-agnostic. Any analytic or machine-learnin
 git clone https://github.com/Feugmo-Group/porecdft.git
 cd porecdft
 
-# CPU (recommended for development)
+# CPU — includes numpy, scipy, matplotlib, pymatgen, hydra-core, omegaconf
 uv sync
 
-# GPU (CUDA JAX + NVIDIA Warp in one step)
+# CPU + JAX (FMT/aWBII, Anderson-on-JAX, FIRE2)
+uv sync --extra jax
+
+# CPU + JAX + gradient-based solvers (optax, optimistix)
+uv sync --extra optim
+
+# GPU — CUDA JAX + optax + NVIDIA Warp (all of the above)
 uv sync --extra gpu
 ```
 
 Or with pip:
 
 ```bash
-pip install -e .            # minimal CPU
-pip install -e ".[dev]"     # + pytest, ruff
+pip install -e .            # CPU core (numpy, scipy, hydra, omegaconf)
+pip install -e ".[jax]"     # + JAX
+pip install -e ".[optim]"   # + JAX + optax + optimistix
 pip install -e ".[gpu]"     # + CUDA JAX + optax + Warp
+```
+
+Development tools (pytest, ruff) are in the `dev` dependency group managed by uv:
+
+```bash
+uv sync --group dev
 ```
 
 The development conda environment is `jax` (`conda activate jax`).
