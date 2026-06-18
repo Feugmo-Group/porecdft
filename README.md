@@ -206,58 +206,228 @@ These stem from the exact **adiabatic connection**:
 
 ## Quick start
 
-H₂ adsorption isotherm in COF-333-CoCl₂ at T = 298 K.
+Two worked examples are shown below. Both follow the same four-step pattern:
+load host → build Vext grid (cached) → pick functional → sweep pressure with the Anderson solver.
+
+### Example 1 — CO₂ in Dha-Tph COF at 298 K (Tutorial 3)
+
+CO₂ is a polyatomic molecule with a permanent quadrupole, so the external potential includes three contributions: LJ dispersion, Gaussian-smeared Coulomb (from QEq charges on the host), and the quadrupole–EFG interaction.
 
 ```python
 import numpy as np
-from porecdft.eos import H2_PR
-from porecdft.functional import LJWDAFunctional
+from porecdft.io import read_cif
+from porecdft.io.forcefield import read_forcefield_dat
+from porecdft.fluid import EPM2_CO2
+from porecdft.eos import CO2_PCSAFT
+from porecdft.forcefield import (
+    LJPotential, CoulombPotential, QuadrupoleEFGPotential, CompositePotential,
+)
+from porecdft.vext import build_vext_on_grid, fibonacci_rotations
+from porecdft.functional import (
+    make_k_grid, make_fmt_weights_hat,
+    compute_weighted_densities, compute_c1, bulk_c1,
+)
 from porecdft.solver import anderson_solve
 
-# ── Load pre-built Vext cache ─────────────────────────────────────────────────
-data     = np.load("applications/h2_cof/results/vext_cache_COF-333-CoCl2.npy",
-                   allow_pickle=True).item()
-vext3d   = data["vext_3d"]
-dV       = float(data["dV"])
-dx, dy, dz = [float(data["spacings"][i]) for i in range(3)]
+T_K      = 298.0
+P_arr    = np.logspace(-2, 1.5, 14)   # 0.01 … ~32 bar
+SIGMA_HS = 3.017                       # CO₂ EPM2 hard-sphere diameter (Å)
 
-T_K = 298.0
+# ── 1. Host ───────────────────────────────────────────────────────────────────
+host    = read_cif("tutorials/data/structures/Dha_Tph_QEq.cif")
+host_ff = read_forcefield_dat("tutorials/data/forcefield/DREIDING.dat")
+host    = host.assign_charges({s: 0.0 for s in set(host.species)})
+# The CIF contains QEq partial charges on every atom; CoulombPotential
+# reads them from host.charges automatically.
 
-# ── Functional ────────────────────────────────────────────────────────────────
-wda     = LJWDAFunctional(sigma=2.83, epsilon=59.7, temperature_K=T_K)
-rho_max = float(0.45 * 6.0 / (np.pi * wda.d**3))
-access  = (vext3d < 50.0 * T_K) & np.isfinite(vext3d)
+# ── 2. Composite potential ────────────────────────────────────────────────────
+fluid     = EPM2_CO2          # 3-site model (C + 2 O) with partial charges
+potential = CompositePotential([
+    LJPotential(host_ff=host_ff, fluid_ff=fluid.ff, cutoff=15.0),
+    CoulombPotential(fluid_charges=fluid.charges,
+                     method="smeared", gauss_width=2.0, cutoff=15.0),
+    QuadrupoleEFGPotential(theta_zz=fluid.theta_zz, cutoff=15.0),
+])
 
-import jax.numpy as jnp
-def c1_fn(rho): return np.asarray(wda.c1(jnp.asarray(rho), dx, dy, dz))
+# ── 3. Vext grid (cached — skipped on re-runs) ────────────────────────────────
+vd = build_vext_on_grid(
+    host, fluid, potential,
+    orientations=fibonacci_rotations(20),
+    spacing=1.2, pbc_supercell=(2, 2, 2),
+    temperature_K=T_K,
+    cache_path="vext_co2_dha_298K.npy",
+    v_reject_below_K=-10000.0, v_cap_above_K=5000.0,
+)
+Vext_K = vd["vext_avg"]
+dV     = float(vd["dV"])
+access = np.isfinite(Vext_K) & (Vext_K < 50.0 * T_K)
 
-# ── Pressure-continuation isotherm ────────────────────────────────────────────
-pressures = [1, 5, 10, 20, 40, 60, 80, 100]   # bar
-rho_prev, rho_prev_b = None, None
+# ── 4. FMT-aWBII isotherm sweep ───────────────────────────────────────────────
+Nx, Ny, Nz = Vext_K.shape
+Lx, Ly, Lz = np.linalg.norm(host.lattice, axis=1)
+KX, KY, KZ, K = make_k_grid((Nx, Ny, Nz), dx=Lx/Nx, dy=Ly/Ny, dz=Lz/Nz)
+w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(K, KX, KY, KZ, SIGMA_HS)
+RHO_MAX = 0.45 * 6.0 / (np.pi * SIGMA_HS**3)
 
-for P in pressures:
-    rho_b  = float(H2_PR.bulk_density(P, T_K))
-    c1_b   = float(wda.c1_bulk(rho_b))
+def c1_fn(rho):
+    wd = compute_weighted_densities(rho, w2_hat, w3_hat, w2vec_hat, SIGMA_HS)
+    return np.asarray(compute_c1(rho, wd, w2_hat, w3_hat, w2vec_hat,
+                                  SIGMA_HS, model="aWBII"))
 
-    if rho_prev is None:
-        # First point: Boltzmann initial guess
-        exp  = np.clip(-vext3d / T_K, -50.0, 20.0)
-        rho0 = np.where(access, np.clip(rho_b * np.exp(exp), 1e-16, rho_max), 1e-16)
-    else:
-        # Warm-start: rescale previous solution
-        rho0 = np.where(access,
-                        np.clip(rho_prev * (rho_b / max(rho_prev_b, 1e-30)), 1e-16, rho_max),
-                        1e-16)
+rho_prev = rho_prev_b = None
+for P in P_arr:
+    rho_b = float(CO2_PCSAFT.bulk_density(P, T_K))
+    c1_b  = bulk_c1(rho_b, SIGMA_HS, model="aWBII")
+    rho0  = (np.minimum(rho_b * np.exp(np.clip(-Vext_K / T_K, -50, 20)), RHO_MAX)
+             if rho_prev is None
+             else np.where(access,
+                           np.clip(rho_prev * rho_b / rho_prev_b, 1e-16, RHO_MAX),
+                           1e-16))
+    res = anderson_solve(rho0, rho_b, Vext_K, T_K, c1_fn, c1_b,
+                         m=6, beta=0.15, max_iter=2000, tol=0.1,
+                         accessibility_mask=access, rho_max=RHO_MAX)
+    N = float(res.rho.sum() * dV)
+    print(f"P = {P:6.3f} bar   N = {N:.3f} mol/u.c.   conv = {res.converged}")
+    rho_prev, rho_prev_b = res.rho.copy(), rho_b
+```
 
-    res = anderson_solve(
-        rho0, rho_b, vext3d, T_K, c1_fn, c1_b,
-        m=8, beta=0.1, max_iter=5000, tol=1e-6,
-        accessibility_mask=access, rho_max=rho_max,
-    )
+Run as a complete script: `tutorials/03_co2_in_dha_cof/run.py`
+
+---
+
+### Example 2 — H₂ in COF-333-CoCl₂ at 298 K
+
+H₂ is a quantum gas near room temperature. The potential combines a standard LJ term for organic-framework atoms with a Morse well for the open Co metal site. The functional uses WDA-LJ (Weighted Density Approximation) with the Peng–Robinson EOS for the bulk reference.
+
+```python
+import numpy as np
+import jax
+jax.config.update("jax_enable_x64", True)
+
+from porecdft.io import read_cif
+from porecdft.eos import H2_PR
+from porecdft.fluid.base import Fluid
+from porecdft.io.forcefield import FFEntry
+from porecdft.forcefield import LJPotential, MorsePotential, CompositePotential
+from porecdft.functional import LJWDAFunctional
+from porecdft.vext import build_vext_on_grid, fibonacci_rotations
+from porecdft.solver import anderson_solve
+
+T_K     = 298.0
+P_arr   = [1, 5, 10, 20, 40, 60, 80, 100]   # bar
+SIGMA   = 2.83    # Å — H₂ LJ sigma
+EPSILON = 59.7    # K — H₂ LJ epsilon/k_B
+DREIDING_LJ = {   # organic DREIDING parameters for H₂ host interactions
+    "H": FFEntry("H",  2.846,  7.649), "C": FFEntry("C",  3.473, 47.856),
+    "N": FFEntry("N",  3.263, 38.949), "O": FFEntry("O",  3.033, 48.158),
+    "Cl": FFEntry("Cl", 3.520, 114.23), "Co": FFEntry("Co", 2.558, 7.050),
+}
+MORSE_CO = dict(D_e=2*0.879*503.228, alpha=0.850, r_e=2.985, cutoff=12.0)
+KCAL_TO_K = 503.228
+
+# ── 1. Host + fluid ───────────────────────────────────────────────────────────
+host  = read_cif("applications/h2_cof/structures/COF-333-CoCl2.cif")
+host  = host.assign_charges({s: 0.0 for s in set(host.species)})
+fluid = Fluid(
+    name="H2", body_sites=np.zeros((1, 3)),
+    site_labels=["H2"],
+    ff={"H2": FFEntry("H2", SIGMA, EPSILON)},
+    charges={"H2": 0.0}, molar_mass=2.016,
+)
+
+# ── 2. LJ + Morse composite potential ─────────────────────────────────────────
+# Morse handles Co open-metal sites; LJ handles everything else.
+morse_atoms = {s: MORSE_CO for s in host.species if s == "Co"}
+potential = CompositePotential([
+    MorsePotential(morse_params=morse_atoms, fluid_label="H2"),
+    LJPotential(host_ff=DREIDING_LJ, fluid_ff=fluid.ff,
+                cutoff=5*SIGMA, exclude_species=frozenset(["Co"])),
+])
+
+# ── 3. Vext grid (cached) ─────────────────────────────────────────────────────
+vd = build_vext_on_grid(
+    host, fluid, potential,
+    orientations=fibonacci_rotations(1),    # monatomic — one orientation
+    spacing=0.5, pbc_supercell=(1, 1, 1),
+    temperature_K=T_K,
+    cache_path="vext_h2_cof333_298K.npy",
+    v_reject_below_K=-10000.0, v_cap_above_K=5000.0,
+)
+Vext_K = vd["orient_min"]   # monatomic: min == only orientation
+dV     = float(vd["dV"])
+access = np.isfinite(Vext_K) & (Vext_K < 50.0 * T_K)
+
+# ── 4. WDA-LJ isotherm sweep ──────────────────────────────────────────────────
+wda     = LJWDAFunctional(sigma=SIGMA, epsilon=EPSILON, temperature_K=T_K)
+RHO_MAX = 0.45 * 6.0 / (np.pi * wda.d**3)
+
+def c1_fn(rho):
+    return np.asarray(wda.c1(rho, dV**(1/3), dV**(1/3), dV**(1/3)))
+
+rho_prev = rho_prev_b = None
+for P in P_arr:
+    rho_b = float(H2_PR.bulk_density(P, T_K))
+    c1_b  = float(wda.c1_bulk(rho_b))
+    rho0  = (np.minimum(rho_b * np.exp(np.clip(-Vext_K / T_K, -50, 20)), RHO_MAX)
+             if rho_prev is None
+             else np.where(access,
+                           np.clip(rho_prev * rho_b / rho_prev_b, 1e-16, RHO_MAX),
+                           1e-16))
+    res = anderson_solve(rho0, rho_b, Vext_K, T_K, c1_fn, c1_b,
+                         m=8, beta=0.1, max_iter=5000, tol=1e-6,
+                         accessibility_mask=access, rho_max=RHO_MAX)
     N = float(res.rho.sum() * dV)
     print(f"P = {P:4d} bar   N = {N:.3f} mol/u.c.   conv = {res.converged}")
-    rho_prev, rho_prev_b = np.asarray(res.rho).copy(), rho_b
+    rho_prev, rho_prev_b = res.rho.copy(), rho_b
 ```
+
+Run as a complete script: `applications/h2_cof/notebooks/make_h2_isotherm_cdft.py`
+
+---
+
+### Example 3 — ComputeConfig (GPU-ready, Hydra-configurable)
+
+Both examples above can be switched to GPU — all three backend layers (Warp Vext kernels, JAX FFTs, Anderson solver) move together — by building a `ComputeConfig` and calling it once before the computation:
+
+```python
+from porecdft.compute_config import ComputeConfig
+
+# Development / CI default — CPU, float64
+compute = ComputeConfig.cpu_float64()
+
+# Production GPU — one line changes everything
+# compute = ComputeConfig.cuda_float32()
+
+compute.apply_jax_device()   # JAX FFTs + solver → requested device
+# compute.enable_jax_x64()  # uncomment for float64 JAX precision
+
+# Pass compute= to build_vext_on_grid (replaces use_warp / warp_device / dtype kwargs)
+vd = build_vext_on_grid(
+    host, fluid, potential,
+    orientations=fibonacci_rotations(20),
+    spacing=1.2, pbc_supercell=(2, 2, 2),
+    temperature_K=298.0,
+    cache_path="vext_co2_dha_298K.npy",
+    compute=compute,
+)
+```
+
+With Hydra (`run_hydra.py`), the same switch happens at the CLI without touching any code:
+
+```bash
+# CPU run (default)
+python tutorials/06_ch4_c2h6_in_dha_tph/run_hydra.py
+
+# GPU run
+python tutorials/06_ch4_c2h6_in_dha_tph/run_hydra.py compute=cuda_float32
+
+# GPU, high resolution, labelled experiment
+python tutorials/06_ch4_c2h6_in_dha_tph/run_hydra.py \
+    compute=cuda_float32 vext.n_orient=200 vext.spacing=0.3 \
+    run.experiment=hi_res_gpu
+```
+
+Results land in `outputs/hi_res_gpu/<date>/<time>/` with a full `.hydra/` config snapshot for reproducibility.
 
 ---
 
