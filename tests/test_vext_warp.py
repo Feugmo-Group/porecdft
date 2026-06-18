@@ -87,3 +87,97 @@ def test_boltzmann_orient_avg_matches_numpy():
     out = boltzmann_orient_avg_warp(v, T_K)
     # float32 vs float64 — tolerant
     np.testing.assert_allclose(out, ref, rtol=1e-3, atol=1.0)
+
+
+# ─── build_vext_on_grid Warp vs NumPy integration ─────────────────────────
+
+def _make_synthetic_host_and_fluid():
+    """Small orthorhombic host + single-site fluid for integration testing."""
+    from porecdft.structure.host import HostAtoms
+    from porecdft.fluid.base import Fluid
+    from porecdft.forcefield.lj import LJPotential
+    from porecdft.io.forcefield import FFEntry
+
+    # 8 C atoms on a simple-cubic lattice inside a 12×12×12 Å box.
+    L = np.eye(3) * 12.0
+    pos = np.array([[x, y, z]
+                    for x in [3.0, 9.0]
+                    for y in [3.0, 9.0]
+                    for z in [3.0, 9.0]], dtype=float)
+    host = HostAtoms(
+        positions=pos,
+        species=["C"] * 8,
+        charges=np.zeros(8),
+        lattice=L,
+    )
+
+    # Single-site monatomic fluid ("M")
+    fluid = Fluid(
+        body_sites=np.zeros((1, 3)),
+        site_labels=["M"],
+    )
+
+    # LJ potential C–M: σ=3.5 Å, ε=50 K
+    host_ff  = {"C": FFEntry(element="C", sigma=3.5, epsilon=50.0)}
+    fluid_ff = {"M": FFEntry(element="M", sigma=3.5, epsilon=50.0)}
+    potential = LJPotential(host_ff=host_ff, fluid_ff=fluid_ff, cutoff=8.0)
+    return host, fluid, potential
+
+
+def test_build_vext_warp_matches_numpy():
+    """Warp path of build_vext_on_grid must agree with NumPy path to float32 tol."""
+    host, fluid, potential = _make_synthetic_host_and_fluid()
+
+    # Single identity orientation (monatomic fluid — orientation is irrelevant)
+    orientations = np.eye(3)[None]  # (1, 3, 3)
+
+    from porecdft.vext.builder import build_vext_on_grid
+
+    result_np = build_vext_on_grid(
+        host, fluid, potential, orientations,
+        spacing=1.5, pbc_supercell=(3, 3, 3),
+        use_warp=False, dtype=np.float64,
+    )
+    result_wp = build_vext_on_grid(
+        host, fluid, potential, orientations,
+        spacing=1.5, pbc_supercell=(3, 3, 3),
+        use_warp=True, warp_device="cpu", dtype=np.float64,
+    )
+
+    vmin_np = result_np["orient_min"].ravel()
+    vmin_wp = result_wp["orient_min"].ravel()
+
+    # Warp kernel runs in float32; expect ~1e-3 relative error on finite voxels.
+    finite = np.isfinite(vmin_np) & np.isfinite(vmin_wp)
+    assert finite.any(), "No finite voxels — check supercell / cutoff setup"
+    np.testing.assert_allclose(
+        vmin_wp[finite], vmin_np[finite],
+        rtol=1e-3, atol=1e-3,
+        err_msg="Warp LJ Vext deviates from NumPy reference by more than float32 tolerance",
+    )
+
+
+def test_build_vext_warp_dtype_float32():
+    """dtype=np.float32 should reduce memory without affecting Warp path correctness."""
+    host, fluid, potential = _make_synthetic_host_and_fluid()
+    orientations = np.eye(3)[None]
+
+    from porecdft.vext.builder import build_vext_on_grid
+
+    r32 = build_vext_on_grid(
+        host, fluid, potential, orientations,
+        spacing=1.5, pbc_supercell=(3, 3, 3),
+        use_warp=True, warp_device="cpu", dtype=np.float32,
+    )
+    r64 = build_vext_on_grid(
+        host, fluid, potential, orientations,
+        spacing=1.5, pbc_supercell=(3, 3, 3),
+        use_warp=True, warp_device="cpu", dtype=np.float64,
+    )
+    assert r32["orient_min"].dtype == np.float32
+    assert r64["orient_min"].dtype == np.float64
+    finite = np.isfinite(r32["orient_min"]) & np.isfinite(r64["orient_min"])
+    np.testing.assert_allclose(
+        r32["orient_min"][finite], r64["orient_min"][finite],
+        rtol=1e-3, atol=1e-3,
+    )

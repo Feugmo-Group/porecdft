@@ -56,6 +56,51 @@ def build_grid(host: HostAtoms, spacing: float) -> tuple[np.ndarray, tuple[int, 
     return cart, n, dV
 
 
+def _extract_lj(potential: Potential):
+    """Return the first LJPotential found inside potential (or composite), else None."""
+    from porecdft.forcefield.lj import LJPotential
+    from porecdft.forcefield.composite import CompositePotential
+    if isinstance(potential, LJPotential):
+        return potential
+    if isinstance(potential, CompositePotential):
+        for c in potential.components:
+            found = _extract_lj(c)
+            if found is not None:
+                return found
+    return None
+
+
+def _precompute_lj_warp_arrays(lj, host_super: HostAtoms, fluid_site_labels: list):
+    """Pre-build (S, Na) parameter arrays for the Warp LJ kernel.
+
+    Called once before the orientation loop; the same arrays are reused for
+    every orientation so the O(S × Na) Python loop runs only once.
+
+    Returns
+    -------
+    sigma_ij, epsilon_ij : (S, Na) float32 ndarray — Å and K
+    active : (S, Na) int32 ndarray — 1 = included, 0 = excluded
+    cutoff : float — LJ cutoff in Å
+    """
+    Na = host_super.n_atoms
+    S = len(fluid_site_labels)
+    exc = lj.exclude_species or frozenset()
+    sigma_ij   = np.zeros((S, Na), dtype=np.float32)
+    epsilon_ij = np.zeros((S, Na), dtype=np.float32)
+    active     = np.zeros((S, Na), dtype=np.int32)
+    for s, label in enumerate(fluid_site_labels):
+        if label not in lj.fluid_ff:
+            continue
+        for a, h_el in enumerate(host_super.species):
+            if h_el in exc:
+                continue
+            sig, eps = lj._pair_params(h_el, label)
+            sigma_ij[s, a]   = np.float32(sig)
+            epsilon_ij[s, a] = np.float32(eps)
+            active[s, a]     = 1
+    return sigma_ij, epsilon_ij, active, float(lj.cutoff)
+
+
 def build_vext_on_grid(
     host: HostAtoms,
     fluid: Fluid,
@@ -66,10 +111,13 @@ def build_vext_on_grid(
     centre_supercell: bool = True,
     temperature_K: float | None = None,      # for Boltzmann averaging; if None, returns min
     cache_path: str | Path | None = None,
-    v_clip_per_orient_K: float | None = None,          # legacy lower cap, kept for back-compat
-    v_reject_below_K: float | None = -10000.0,        # reject (orient, voxel) pairs with V < this
-    v_cap_above_K: float | None = 5000.0,             # cap per-orient V from above before averaging
-    averaging: str = "boltzmann",                      # "boltzmann" (free energy) or "arithmetic" (mean-field)
+    v_clip_per_orient_K: float | None = None,         # legacy lower cap, kept for back-compat
+    v_reject_below_K: float | None = -10000.0,       # reject (orient, voxel) pairs with V < this
+    v_cap_above_K: float | None = 5000.0,            # cap per-orient V from above before averaging
+    averaging: str = "boltzmann",                     # "boltzmann" (free energy) or "arithmetic"
+    use_warp: bool = False,
+    warp_device: str = "cpu",
+    dtype: type = np.float64,
 ) -> dict:
     """Compute Vext on a 3D grid, averaged or minimised over orientations.
 
@@ -101,6 +149,19 @@ def build_vext_on_grid(
     cache_path : str or Path, optional
         If given and the file exists, load it instead of recomputing. After
         computation, save the result there.
+    use_warp : bool
+        If True and warp-lang is installed, accelerate the LJ kernel via NVIDIA
+        Warp.  Non-LJ components (Coulomb, Morse, …) still run on NumPy.
+        Ignored gracefully when warp-lang is absent.
+    warp_device : str
+        Warp device string, e.g. ``"cpu"`` or ``"cuda:0"``.  Controlled via a
+        Hydra / OmegaConf config flag so a single YAML change switches the
+        backend at run time.
+    dtype : numpy dtype
+        Floating-point precision for the accumulation arrays.  Default
+        ``np.float64``.  Pass ``np.float32`` for reduced memory / faster
+        host-side sorting.  The Warp kernels always compute in float32
+        internally; their output is cast to ``dtype`` before storing.
 
     Returns
     -------
@@ -132,16 +193,60 @@ def build_vext_on_grid(
     Norient = len(orientations)
     Ng = grid_xyz.shape[0]
 
+    # Optionally prepare the Warp fast path (LJ kernel + NumPy fallback for non-LJ).
+    _use_warp_path = False
+    _lj_warp_arrays = None
+    _non_lj_comps: list = []
+    if use_warp:
+        try:
+            from porecdft.warp_backend import WARP_AVAILABLE
+            from porecdft.warp_backend.vext_kernels import lj_vext_grid_warp
+        except ImportError:
+            WARP_AVAILABLE = False
+        if WARP_AVAILABLE:
+            lj = _extract_lj(potential)
+            if lj is not None:
+                _lj_warp_arrays = _precompute_lj_warp_arrays(
+                    lj, host_super, fluid.site_labels
+                )
+                _host_pos_f32  = np.ascontiguousarray(host_super.positions, dtype=np.float32)
+                _grid_xyz_f32  = np.ascontiguousarray(grid_xyz, dtype=np.float32)
+                from porecdft.forcefield.composite import CompositePotential
+                if isinstance(potential, CompositePotential):
+                    _non_lj_comps = [c for c in potential.components if c is not lj]
+                _use_warp_path = True
+
     # Compute Vext(r, Ω) — memory-friendly: loop over orientations, vector over grid.
     import sys, time
-    all_v = np.empty((Norient, Ng), dtype=float)
+    all_v = np.empty((Norient, Ng), dtype=dtype)
     print(f"    Vext build: grid {shape} ({Ng} pts), {host_super.n_atoms} host atoms, "
-          f"{Norient} orientations", flush=True)
+          f"{Norient} orientations  [warp={_use_warp_path}, dtype={np.dtype(dtype).name}]",
+          flush=True)
     t0 = time.time()
     for k, rot in enumerate(orientations):
-        v_k = potential.energy_grid(
-            grid_xyz, rot, host_super, fluid.body_sites, fluid.site_labels
-        )
+        if _use_warp_path:
+            sigma_ij, epsilon_ij, active_mask, lj_cutoff = _lj_warp_arrays
+            site_offset_lab = np.ascontiguousarray(
+                fluid.body_sites @ rot.T, dtype=np.float32
+            )
+            v_k = lj_vext_grid_warp(
+                _grid_xyz_f32, site_offset_lab, _host_pos_f32,
+                sigma_ij, epsilon_ij, active_mask, lj_cutoff,
+                device=warp_device,
+            ).astype(dtype)
+            for comp in _non_lj_comps:
+                v_k = v_k + np.asarray(
+                    comp.energy_grid(grid_xyz, rot, host_super,
+                                     fluid.body_sites, fluid.site_labels),
+                    dtype=dtype,
+                )
+        else:
+            v_k = np.asarray(
+                potential.energy_grid(
+                    grid_xyz, rot, host_super, fluid.body_sites, fluid.site_labels
+                ),
+                dtype=dtype,
+            )
         # Reject (orient, voxel) pairs with unphysically deep V — they come from
         # rigid EPM2 sites accidentally landing on top of framework atoms in
         # specific orientations (point-charge Coulomb singularity, LJ tail). The
