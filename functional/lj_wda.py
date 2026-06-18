@@ -137,6 +137,8 @@ class LJWDAFunctional:
         dx: float,
         dy: float,
         dz: float,
+        weights=None,
+        w_hat=None,
     ) -> jnp.ndarray:
         """Total c¹(r) = c¹_HS(r) + c¹_att(r).
 
@@ -146,14 +148,36 @@ class LJWDAFunctional:
             Density field in molecules·Å⁻³.
         dx, dy, dz : float
             Grid spacings in Å.
+        weights : FMTWeightsHat, optional
+            Pre-computed FMT weight arrays.  When provided together with
+            ``w_hat``, the internal ``_get_weights()`` call is skipped.
+            Useful for GL quadrature loops where the same weights are reused
+            across n_quad c¹ evaluations.  If None, weights are fetched from
+            the internal cache (or computed on first call) as usual — all
+            existing callers continue to work unchanged.
+        w_hat : jnp.ndarray, optional
+            Pre-computed WDA sphere weight in Fourier space.  Must be
+            supplied together with ``weights``; ignored when ``weights`` is None.
 
         Returns
         -------
         jnp.ndarray
             Total direct correlation function field (dimensionless).
+
+        Note
+        ----
+        When calling this method inside a ``jax.jit``-compiled function
+        across multiple iterations (e.g., an isotherm pressure loop with
+        ``jax_solve``), call ``self._get_weights(rho.shape, dx, dy, dz)``
+        once *before* entering the loop to populate the weight cache with
+        concrete arrays.  Without this, the cache stores JAX DynamicJaxprTracers
+        from the first JIT trace which become stale on re-entry.
         """
         shape = rho.shape
-        w2_hat, w3_hat, w2vec_hat, w_hat = self._get_weights(shape, dx, dy, dz)
+        if weights is not None and w_hat is not None:
+            w2_hat, w3_hat, w2vec_hat = weights
+        else:
+            w2_hat, w3_hat, w2vec_hat, w_hat = self._get_weights(shape, dx, dy, dz)
 
         # Hard-sphere part (aWBII)
         wd = compute_weighted_densities(rho, w2_hat, w3_hat, w2vec_hat, self.d)

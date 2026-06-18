@@ -1,0 +1,24 @@
+# Global compute-backend configuration for porecdft.
+#
+# This file is the single place to switch between CPU and GPU for an entire run.
+# Every compute function (Vext builder, FMT/aWBII functional, Anderson/FIRE2
+# solver) reads from the ComputeConfig object built from this file.
+#
+# CLI overrides (Hydra):
+#   python run.py compute.use_warp=true compute.warp_device=cuda:0 \
+#                 compute.jax_device=gpu compute.dtype=float32
+
+# --- Warp (NVIDIA Warp-lang) -------------------------------------------
+# Controls the Vext LJ / Coulomb / Morse kernels and Boltzmann averaging.
+use_warp: false          # true  → use Warp GPU kernels; false → NumPy fallback
+warp_device: cpu         # "cpu" | "cuda:0" | "cuda:1" ...
+
+# --- JAX / XLA -----------------------------------------------------------
+# Controls FMT / aWBII FFT convolutions and the JAX-based solver.
+# Call compute.apply_jax_device() once at script start to wire this up.
+jax_device: cpu          # "cpu" | "gpu" | "tpu"
+
+# --- Numerical precision -------------------------------------------------
+# dtype for NumPy accumulation arrays and Warp output casts.
+# JAX compute stays at float32 unless jax_enable_x64 is also set.
+dtype: float64           # "float64" (default, recommended) | "float32"

@@ -20,3 +20,5 @@ Layout:
 """
 
 __version__ = "0.0.1"
+
+from porecdft.compute_config import ComputeConfig  # noqa: F401  — public API

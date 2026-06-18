@@ -273,7 +273,7 @@ def _build_boltz_kernel():
 def lj_vext_grid_warp(
     grid_xyz, site_offset, host_pos,
     sigma_ij, epsilon_ij, active,
-    cutoff, out=None,
+    cutoff, out=None, device: str = "cpu",
 ):
     """Compute LJ V_ext on a 3D grid for one orientation via Warp.
 
@@ -283,15 +283,19 @@ def lj_vext_grid_warp(
     ----------
     grid_xyz : (Ng, 3) array
     site_offset : (S, 3) array — already-rotated fluid-site lab offsets
-    host_pos : (Na, 3) array
+    host_pos : (Na, 3) array — supercell-replicated atoms (PBC handled by caller)
     sigma_ij, epsilon_ij : (S, Na) arrays (Å, K)
     active : (S, Na) int array (1=include, 0=skip)
     cutoff : float, Å
     out : optional (Ng,) array — accumulated in-place if given, else zero-init.
+    device : str
+        Warp device string, e.g. ``"cpu"`` or ``"cuda:0"``.  Pass via the
+        ``warp_device`` argument of :func:`build_vext_on_grid` so that a
+        single Hydra / OmegaConf flag controls where all kernels run.
 
     Returns
     -------
-    (Ng,) numpy or JAX array — V_ext contribution from LJ, in K.
+    (Ng,) numpy array — V_ext contribution from LJ, in K.
     """
     if not WARP_AVAILABLE:
         raise RuntimeError("warp-lang not installed.")
@@ -312,13 +316,12 @@ def lj_vext_grid_warp(
     else:
         out_np = np.ascontiguousarray(np.asarray(out, dtype=np.float32))
 
-    device = "cpu"
-    wp_grid    = wp.array(gp,  dtype=wp.vec3,    device=device)
-    wp_site    = wp.array(so,  dtype=wp.vec3,    device=device)
-    wp_host    = wp.array(hp,  dtype=wp.vec3,    device=device)
-    wp_sigma   = wp.array(sij, dtype=wp.float32, device=device)
-    wp_eps     = wp.array(eij, dtype=wp.float32, device=device)
-    wp_active  = wp.array(act, dtype=wp.int32,   device=device)
+    wp_grid    = wp.array(gp,     dtype=wp.vec3,    device=device)
+    wp_site    = wp.array(so,     dtype=wp.vec3,    device=device)
+    wp_host    = wp.array(hp,     dtype=wp.vec3,    device=device)
+    wp_sigma   = wp.array(sij,    dtype=wp.float32, device=device)
+    wp_eps     = wp.array(eij,    dtype=wp.float32, device=device)
+    wp_active  = wp.array(act,    dtype=wp.int32,   device=device)
     wp_out     = wp.array(out_np, dtype=wp.float32, device=device)
 
     wp.launch(wk, dim=Ng,
@@ -330,7 +333,8 @@ def lj_vext_grid_warp(
 
 
 def boltzmann_orient_avg_warp(v_per_orient, T_K,
-                              v_min_clip=-10000.0, v_max_clip=50000.0):
+                              v_min_clip=-10000.0, v_max_clip=50000.0,
+                              device: str = "cpu"):
     """Free-energy orientation average ``V(r;T) = -kT·log<exp(-βV)>_Ω`` via Warp.
 
     Parameters
@@ -338,6 +342,8 @@ def boltzmann_orient_avg_warp(v_per_orient, T_K,
     v_per_orient : (N_orient, Ng) array of V values (K)
     T_K : float
     v_min_clip, v_max_clip : float — per-voxel clamps to suppress singularities
+    device : str
+        Warp device string, e.g. ``"cpu"`` or ``"cuda:0"``.
 
     Returns
     -------
@@ -351,9 +357,9 @@ def boltzmann_orient_avg_warp(v_per_orient, T_K,
     n_or, Ng = v_per_orient.shape
     vpo = np.ascontiguousarray(np.asarray(v_per_orient, dtype=np.float32))
 
-    wp_v   = wp.array(vpo, dtype=wp.float32, device="cpu")
-    wp_out = wp.zeros(Ng, dtype=wp.float32, device="cpu")
+    wp_v   = wp.array(vpo, dtype=wp.float32, device=device)
+    wp_out = wp.zeros(Ng, dtype=wp.float32, device=device)
     wp.launch(wk, dim=Ng,
               inputs=[wp_v, float(T_K), float(v_min_clip), float(v_max_clip)],
-              outputs=[wp_out], device="cpu")
+              outputs=[wp_out], device=device)
     return wp_out.numpy()
