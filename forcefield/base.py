@@ -63,6 +63,7 @@ class Potential(ABC):
         host: HostAtoms,
         fluid_sites: np.ndarray,
         fluid_site_labels: list[str],
+        use_warp: bool=False
     ) -> np.ndarray:
         """Vectorized energy at each grid point for a single orientation.
 

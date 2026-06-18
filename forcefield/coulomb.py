@@ -113,14 +113,14 @@ class CoulombPotential(Potential):
         Rc = self.cutoff
         if self.method == "direct":
             return COULOMB_K_KELVIN_ANGSTROM / r
-        if self.method == "wolf":
+        elif self.method == "wolf":
             a = self.wolf_alpha
             shift = erfc(a * Rc) / Rc
             return COULOMB_K_KELVIN_ANGSTROM * (erfc(a * r) / r - shift)
-        # method == "smeared": Gaussian-smeared point charges
-        # φ(r) = KE · erf(r/σ) / r — finite at r=0, → KE/r at large r
-        sigma = self.gauss_width
-        return COULOMB_K_KELVIN_ANGSTROM * erf(r / sigma) / r
+        elif self.method == "smeared": # Gaussian-smeared point charges
+            # φ(r) = KE · erf(r/σ) / r — finite at r=0, → KE/r at large r
+            sigma = self.gauss_width
+            return COULOMB_K_KELVIN_ANGSTROM * erf(r / sigma) / r
 
     def energy_at(self, r_center, rot, host, fluid_sites, fluid_site_labels) -> PotentialEnergy:
         actual_host = self.host_override if self.host_override is not None else host
@@ -146,34 +146,54 @@ class CoulombPotential(Potential):
             total += float(q_s * (host_q[mask] * phi).sum())
         return PotentialEnergy(total=total, parts={"Coulomb": total})
 
-    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels):
-        actual_host = self.host_override if self.host_override is not None else host
-        grid = np.asarray(grid_xyz)
-        sites_lab = grid[:, None, :] + (fluid_sites @ rot.T)[None, :, :]  # (Ng, S, 3)
-        host_pos = actual_host.positions
-        host_q = actual_host.charges
-        total = np.zeros(len(grid), dtype=float)
-        cutoff2 = self.cutoff * self.cutoff
-        use_mic = self.mic_lattice is not None
-        if use_mic:
-            invL = np.linalg.inv(np.asarray(self.mic_lattice))
-            L = np.asarray(self.mic_lattice)
-        for s_idx, label in enumerate(fluid_site_labels):
-            q_s = self.fluid_charges.get(label, 0.0)
-            if q_s == 0.0:
-                continue
-            site = sites_lab[:, s_idx, :]                     # (Ng, 3)
-            dr = host_pos[None, :, :] - site[:, None, :]      # (Ng, Na, 3)
+    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp):
+        if use_warp: # call warp subrountine
+            from porecdft.warp_backend import coulomb_vext_grid_warp
+            # prepare tensor feed into warp kernel
+            site_offset = fluid_sites @ rot.T
+            actual_host = self.host_override if self.host_override is not None else host
+            host_q = actual_host.charges
+            host_pos = actual_host.positions
+            site_q = np.array([self.fluid_charges.get(label, 0.0) for label in fluid_site_labels])
+            sigma_eff = self.gauss_width
+            prefactor_K = COULOMB_K_KELVIN_ANGSTROM
+            return coulomb_vext_grid_warp(grid_xyz, 
+                                          site_offset, 
+                                          site_q,
+                                          host_pos,
+                                          host_q,  
+                                          sigma_eff,
+                                          prefactor_K,
+                                          self.cutoff)
+
+        else: # numpy implementation
+            actual_host = self.host_override if self.host_override is not None else host
+            grid = np.asarray(grid_xyz)
+            sites_lab = grid[:, None, :] + (fluid_sites @ rot.T)[None, :, :]  # (Ng, S, 3)
+            host_pos = actual_host.positions
+            host_q = actual_host.charges
+            total = np.zeros(len(grid), dtype=float)
+            cutoff2 = self.cutoff * self.cutoff
+            use_mic = self.mic_lattice is not None
             if use_mic:
-                frac = dr @ invL                               # (Ng, Na, 3)
-                frac = frac - np.round(frac)
-                dr = frac @ L
-            r2 = np.einsum("gad,gad->ga", dr, dr)
-            mask = (r2 < cutoff2) & (r2 > 0.0)
-            r_safe = np.sqrt(np.where(mask, r2, 1.0))
-            phi = np.where(mask, self._phi(r_safe), 0.0)
-            total += q_s * (phi * host_q[None, :]).sum(axis=1)
-        return total
+                invL = np.linalg.inv(np.asarray(self.mic_lattice))
+                L = np.asarray(self.mic_lattice)
+            for s_idx, label in enumerate(fluid_site_labels):
+                q_s = self.fluid_charges.get(label, 0.0)
+                if q_s == 0.0:
+                    continue
+                site = sites_lab[:, s_idx, :]                     # (Ng, 3)
+                dr = host_pos[None, :, :] - site[:, None, :]      # (Ng, Na, 3)
+                if use_mic:
+                    frac = dr @ invL                               # (Ng, Na, 3)
+                    frac = frac - np.round(frac)
+                    dr = frac @ L
+                r2 = np.einsum("gad,gad->ga", dr, dr)
+                mask = (r2 < cutoff2) & (r2 > 0.0)
+                r_safe = np.sqrt(np.where(mask, r2, 1.0))
+                phi = np.where(mask, self._phi(r_safe), 0.0)
+                total += q_s * (phi * host_q[None, :]).sum(axis=1)
+            return total
 
 
 class SmearCoulombPotential(CoulombPotential):
