@@ -1,0 +1,6 @@
+# @package _global_.compute
+# CPU backend, double precision — default for CI / interactive work.
+use_warp:    false
+warp_device: cpu
+jax_device:  cpu
+dtype:       float64

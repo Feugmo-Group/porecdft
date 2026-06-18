@@ -1,0 +1,7 @@
+# @package _global_.compute
+# CUDA GPU, single precision — for production runs with NVIDIA hardware.
+# Override device index if needed: compute.warp_device=cuda:1
+use_warp:    true
+warp_device: cuda:0
+jax_device:  gpu
+dtype:       float32

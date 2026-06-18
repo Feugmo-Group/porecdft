@@ -1,0 +1,9 @@
+# @package _global_.vext
+# Coarse grid for quick testing / parameter sweeps.
+spacing:          1.0
+pbc_supercell:    [2, 2, 2]
+n_orient:         10
+averaging:        boltzmann
+v_reject_below_K: -10000.0
+v_cap_above_K:    5000.0
+access_factor:    5.0
