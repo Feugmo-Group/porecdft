@@ -396,6 +396,68 @@ def coulomb_vext_grid_warp(
     return wp_out.numpy()
 
 
+def morse_vext_grid_warp(
+    grid_xyz, site_offset, host_pos,
+    D_e, alpha_w, r_e, active,
+    cutoff, out=None,
+):
+    """Compute Morse V_ext on a 3D grid for one orientation via Warp.
+
+    See :func:`_build_morse_kernel` for the underlying kernel.
+
+    Parameters
+    ----------
+    grid_xyz : (Ng, 3) array
+    site_offset : (3,) array — already-rotated single fluid-site lab offset, Å
+    host_pos : (Na, 3) array
+    D_e : (Na,) array — Morse well depth, K
+    alpha_w : (Na,) array — Morse curvature, 1/Å
+    r_e : (Na,) array — Morse equilibrium distance, Å
+    active : (Na,) int array (1=metal site, 0=skip)
+    cutoff : float, Å
+    out : optional (Ng,) array — accumulated in-place if given, else zero-init.
+
+    Returns
+    -------
+    (Ng,) numpy array — V_ext contribution from Morse, in K.
+    """
+    if not WARP_AVAILABLE:
+        raise RuntimeError("warp-lang not installed.")
+    import numpy as np
+    import warp as wp
+    wk, _ = _build_morse_kernel()
+    Ng = grid_xyz.shape[0]
+
+    gp  = np.ascontiguousarray(np.asarray(grid_xyz,   dtype=np.float32).reshape(-1, 3))
+    hp  = np.ascontiguousarray(np.asarray(host_pos,   dtype=np.float32).reshape(-1, 3))
+    de  = np.ascontiguousarray(np.asarray(D_e,        dtype=np.float32))
+    aw  = np.ascontiguousarray(np.asarray(alpha_w,    dtype=np.float32))
+    re  = np.ascontiguousarray(np.asarray(r_e,        dtype=np.float32))
+    act = np.ascontiguousarray(np.asarray(active,     dtype=np.int32))
+    so  = np.asarray(site_offset, dtype=np.float32).ravel()
+    if out is None:
+        out_np = np.zeros(Ng, dtype=np.float32)
+    else:
+        out_np = np.ascontiguousarray(np.asarray(out, dtype=np.float32))
+
+    device = "cpu"
+    wp_grid   = wp.array(gp,     dtype=wp.vec3,    device=device)
+    wp_host   = wp.array(hp,     dtype=wp.vec3,    device=device)
+    wp_de     = wp.array(de,     dtype=wp.float32, device=device)
+    wp_aw     = wp.array(aw,     dtype=wp.float32, device=device)
+    wp_re     = wp.array(re,     dtype=wp.float32, device=device)
+    wp_active = wp.array(act,    dtype=wp.int32,   device=device)
+    wp_out    = wp.array(out_np, dtype=wp.float32, device=device)
+    wp_so     = wp.vec3(float(so[0]), float(so[1]), float(so[2]))
+
+    wp.launch(wk, dim=Ng,
+              inputs=[wp_grid, wp_so, wp_host,
+                      wp_de, wp_aw, wp_re, wp_active,
+                      float(cutoff)],
+              outputs=[wp_out], device=device)
+    return wp_out.numpy()
+
+
 def boltzmann_orient_avg_warp(v_per_orient, T_K,
                               v_min_clip=-10000.0, v_max_clip=50000.0):
     """Free-energy orientation average ``V(r;T) = -kT·log<exp(-βV)>_Ω`` via Warp.
