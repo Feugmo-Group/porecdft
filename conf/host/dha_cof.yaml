@@ -1,0 +1,4 @@
+# @package _global_.host
+cif:           Dha_COF.cif
+ff_dat:        DREIDING.dat
+charge_method: zero

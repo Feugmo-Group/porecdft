@@ -22,6 +22,7 @@ from typing import Iterable
 
 import numpy as np
 
+from porecdft.compute_config import ComputeConfig
 from porecdft.fluid.base import Fluid
 from porecdft.forcefield.base import Potential
 from porecdft.structure.host import HostAtoms
@@ -56,6 +57,51 @@ def build_grid(host: HostAtoms, spacing: float) -> tuple[np.ndarray, tuple[int, 
     return cart, n, dV
 
 
+def _extract_lj(potential: Potential):
+    """Return the first LJPotential found inside potential (or composite), else None."""
+    from porecdft.forcefield.lj import LJPotential
+    from porecdft.forcefield.composite import CompositePotential
+    if isinstance(potential, LJPotential):
+        return potential
+    if isinstance(potential, CompositePotential):
+        for c in potential.components:
+            found = _extract_lj(c)
+            if found is not None:
+                return found
+    return None
+
+
+def _precompute_lj_warp_arrays(lj, host_super: HostAtoms, fluid_site_labels: list):
+    """Pre-build (S, Na) parameter arrays for the Warp LJ kernel.
+
+    Called once before the orientation loop; the same arrays are reused for
+    every orientation so the O(S × Na) Python loop runs only once.
+
+    Returns
+    -------
+    sigma_ij, epsilon_ij : (S, Na) float32 ndarray — Å and K
+    active : (S, Na) int32 ndarray — 1 = included, 0 = excluded
+    cutoff : float — LJ cutoff in Å
+    """
+    Na = host_super.n_atoms
+    S = len(fluid_site_labels)
+    exc = lj.exclude_species or frozenset()
+    sigma_ij   = np.zeros((S, Na), dtype=np.float32)
+    epsilon_ij = np.zeros((S, Na), dtype=np.float32)
+    active     = np.zeros((S, Na), dtype=np.int32)
+    for s, label in enumerate(fluid_site_labels):
+        if label not in lj.fluid_ff:
+            continue
+        for a, h_el in enumerate(host_super.species):
+            if h_el in exc:
+                continue
+            sig, eps = lj._pair_params(h_el, label)
+            sigma_ij[s, a]   = np.float32(sig)
+            epsilon_ij[s, a] = np.float32(eps)
+            active[s, a]     = 1
+    return sigma_ij, epsilon_ij, active, float(lj.cutoff)
+
+
 def build_vext_on_grid(
     host: HostAtoms,
     fluid: Fluid,
@@ -66,11 +112,15 @@ def build_vext_on_grid(
     centre_supercell: bool = True,
     temperature_K: float | None = None,      # for Boltzmann averaging; if None, returns min
     cache_path: str | Path | None = None,
-    v_clip_per_orient_K: float | None = None,          # legacy lower cap, kept for back-compat
-    v_reject_below_K: float | None = -10000.0,        # reject (orient, voxel) pairs with V < this
-    v_cap_above_K: float | None = 5000.0,             # cap per-orient V from above before averaging
-    averaging: str = "boltzmann",                      # "boltzmann" (free energy) or "arithmetic" (mean-field)
-    use_warp: bool = False
+    v_clip_per_orient_K: float | None = None,         # legacy lower cap, kept for back-compat
+    v_reject_below_K: float | None = -10000.0,       # reject (orient, voxel) pairs with V < this
+    v_cap_above_K: float | None = 5000.0,            # cap per-orient V from above before averaging
+    averaging: str = "boltzmann",                     # "boltzmann" (free energy) or "arithmetic"
+    compute: ComputeConfig | None = None,
+    # --- deprecated individual params (kept for backward compat) ---
+    use_warp: bool = False,
+    warp_device: str = "cpu",
+    dtype: type = np.float64,
 ) -> dict:
     """Compute Vext on a 3D grid, averaged or minimised over orientations.
 
@@ -102,6 +152,22 @@ def build_vext_on_grid(
     cache_path : str or Path, optional
         If given and the file exists, load it instead of recomputing. After
         computation, save the result there.
+    compute : ComputeConfig, optional
+        Global backend config (preferred).  Supplies ``use_warp``,
+        ``warp_device``, and ``dtype`` in one object.  Build it from
+        ``conf/compute.yaml`` via ``ComputeConfig.from_omegaconf(cfg.compute)``
+        so that a single Hydra CLI flag (e.g.
+        ``compute.warp_device=cuda:0 compute.use_warp=true``) switches the
+        entire run — Vext Warp kernels, JAX functional FFTs, and the solver.
+        When *compute* is given, the individual *use_warp*, *warp_device*, and
+        *dtype* kwargs are ignored.
+    use_warp : bool
+        Deprecated — pass a :class:`~porecdft.compute_config.ComputeConfig`
+        via *compute* instead.  Ignored when *compute* is provided.
+    warp_device : str
+        Deprecated — see *compute*.
+    dtype : numpy dtype
+        Deprecated — see *compute*.  Default ``np.float64``.
 
     Returns
     -------
@@ -114,6 +180,16 @@ def build_vext_on_grid(
         if cache_path.exists():
             data = np.load(cache_path, allow_pickle=True).item()
             return data
+
+    # Resolve compute settings: ComputeConfig takes precedence over individual kwargs.
+    if compute is not None:
+        _use_warp   = compute.use_warp
+        _warp_device = compute.warp_device
+        _dtype      = compute.np_dtype
+    else:
+        _use_warp    = use_warp
+        _warp_device = warp_device
+        _dtype       = dtype
 
     # Build replicated host once
     n_a, n_b, n_c = pbc_supercell
@@ -133,11 +209,35 @@ def build_vext_on_grid(
     Norient = len(orientations)
     Ng = grid_xyz.shape[0]
 
+    # Optionally prepare the Warp fast path (LJ kernel + NumPy fallback for non-LJ).
+    _use_warp_path = False
+    _lj_warp_arrays = None
+    _non_lj_comps: list = []
+    if _use_warp:
+        try:
+            from porecdft.warp_backend import WARP_AVAILABLE
+            from porecdft.warp_backend.vext_kernels import lj_vext_grid_warp
+        except ImportError:
+            WARP_AVAILABLE = False
+        if WARP_AVAILABLE:
+            lj = _extract_lj(potential)
+            if lj is not None:
+                _lj_warp_arrays = _precompute_lj_warp_arrays(
+                    lj, host_super, fluid.site_labels
+                )
+                _host_pos_f32  = np.ascontiguousarray(host_super.positions, dtype=np.float32)
+                _grid_xyz_f32  = np.ascontiguousarray(grid_xyz, dtype=np.float32)
+                from porecdft.forcefield.composite import CompositePotential
+                if isinstance(potential, CompositePotential):
+                    _non_lj_comps = [c for c in potential.components if c is not lj]
+                _use_warp_path = True
+
     # Compute Vext(r, Ω) — memory-friendly: loop over orientations, vector over grid.
     import sys, time
-    all_v = np.empty((Norient, Ng), dtype=float)
+    all_v = np.empty((Norient, Ng), dtype=_dtype)
     print(f"    Vext build: grid {shape} ({Ng} pts), {host_super.n_atoms} host atoms, "
-          f"{Norient} orientations", flush=True)
+          f"{Norient} orientations  [warp={_use_warp_path}, dtype={np.dtype(_dtype).name}]",
+          flush=True)
     t0 = time.time()
     for k, rot in enumerate(orientations):
         v_k = potential.energy_grid(
