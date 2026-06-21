@@ -177,9 +177,10 @@ def _build_coulomb_kernel():
         cutoff2:     float,                          # Å²
         prefactor_K: float,                          # K·Å — converts q·q/r to K
         use_mic:     int,                            # 1 = apply minimum image convention
-        # MIC lattice and inverse stored as three row vectors each
-        lat_a: wp.vec3, lat_b: wp.vec3, lat_c: wp.vec3,
-        inv_a: wp.vec3, inv_b: wp.vec3, inv_c: wp.vec3,
+        # MIC lattice and inverse as flat row-major float32 arrays of length 9
+        # lat_mat[3*i+j] = L[i,j];  inv_mat[3*i+j] = invL[i,j]
+        lat_mat: wp.array(dtype=wp.float32),
+        inv_mat: wp.array(dtype=wp.float32),
         out:         wp.array(dtype=wp.float32),
     ):
         """Per-voxel Coulomb energy.  Each thread owns one grid voxel.
@@ -203,16 +204,20 @@ def _build_coulomb_kernel():
 
                 # Apply minimum image convention if requested
                 if use_mic == 1:
-                    # Fractional coordinates: f = inv_L * dr
-                    fx = wp.dot(inv_a, dr)
-                    fy = wp.dot(inv_b, dr)
-                    fz = wp.dot(inv_c, dr)
+                    # Fractional coordinates via rows of invL dotted with dr
+                    fx = inv_mat[0]*dr[0] + inv_mat[1]*dr[1] + inv_mat[2]*dr[2]
+                    fy = inv_mat[3]*dr[0] + inv_mat[4]*dr[1] + inv_mat[5]*dr[2]
+                    fz = inv_mat[6]*dr[0] + inv_mat[7]*dr[1] + inv_mat[8]*dr[2]
                     # Wrap to [-0.5, 0.5)
                     fx = fx - wp.round(fx)
                     fy = fy - wp.round(fy)
                     fz = fz - wp.round(fz)
-                    # Back to Cartesian
-                    dr = fx * lat_a + fy * lat_b + fz * lat_c
+                    # Back to Cartesian: frac @ L (L rows are lattice vectors)
+                    dr = wp.vec3(
+                        fx*lat_mat[0] + fy*lat_mat[3] + fz*lat_mat[6],
+                        fx*lat_mat[1] + fy*lat_mat[4] + fz*lat_mat[7],
+                        fx*lat_mat[2] + fy*lat_mat[5] + fz*lat_mat[8],
+                    )
 
                 r2 = wp.dot(dr, dr)
                 if r2 <= wp.float32(0.0) or r2 >= cutoff2:
@@ -345,7 +350,8 @@ def lj_vext_grid_warp(
     else:
         out_np = np.ascontiguousarray(np.asarray(out, dtype=np.float32))
 
-    device = "cpu"
+    has_cuda = any(d.alias.startswith("cuda") for d in wp.get_devices())
+    device = "cuda:0" if has_cuda else "cpu"
     wp_grid    = wp.array(gp,  dtype=wp.vec3,    device=device)
     wp_site    = wp.array(so,  dtype=wp.vec3,    device=device)
     wp_host    = wp.array(hp,  dtype=wp.vec3,    device=device)
@@ -410,37 +416,33 @@ def coulomb_vext_grid_warp(
     else:
         out_np = np.ascontiguousarray(np.asarray(out, dtype=np.float32))
 
-    # Prepare MIC parameters
+    # Prepare MIC parameters as flat row-major float32 arrays (length 9)
     if mic_lattice is not None:
         L = np.asarray(mic_lattice, dtype=np.float32)   # (3, 3) rows = lattice vectors
         invL = np.linalg.inv(L).astype(np.float32)
         use_mic = 1
-        # Row vectors of L and columns of invL (each is a wp.vec3)
-        lat_a = wp.vec3(L[0, 0], L[0, 1], L[0, 2])
-        lat_b = wp.vec3(L[1, 0], L[1, 1], L[1, 2])
-        lat_c = wp.vec3(L[2, 0], L[2, 1], L[2, 2])
-        # inv_a, inv_b, inv_c are ROWS of invL — dot with dr gives fractional coords
-        inv_a = wp.vec3(invL[0, 0], invL[0, 1], invL[0, 2])
-        inv_b = wp.vec3(invL[1, 0], invL[1, 1], invL[1, 2])
-        inv_c = wp.vec3(invL[2, 0], invL[2, 1], invL[2, 2])
+        lat_flat = L.ravel()       # [L00, L01, L02, L10, L11, L12, L20, L21, L22]
+        inv_flat = invL.ravel()
     else:
         use_mic = 0
-        _zero = wp.vec3(0.0, 0.0, 0.0)
-        lat_a = lat_b = lat_c = _zero
-        inv_a = inv_b = inv_c = _zero
+        lat_flat = np.zeros(9, dtype=np.float32)
+        inv_flat = np.zeros(9, dtype=np.float32)
 
-    device = "cpu"
-    wp_grid  = wp.array(gp,    dtype=wp.vec3,    device=device)
-    wp_site  = wp.array(so,    dtype=wp.vec3,    device=device)
-    wp_host  = wp.array(hp,    dtype=wp.vec3,    device=device)
-    wp_siteq = wp.array(siteq, dtype=wp.float32, device=device)
-    wp_hostq = wp.array(hostq, dtype=wp.float32, device=device)
-    wp_out   = wp.array(out_np, dtype=wp.float32, device=device)
+    has_cuda = any(d.alias.startswith("cuda") for d in wp.get_devices())
+    device = "cuda:0" if has_cuda else "cpu"
+    wp_grid   = wp.array(gp,                dtype=wp.vec3,    device=device)
+    wp_site   = wp.array(so,                dtype=wp.vec3,    device=device)
+    wp_host   = wp.array(hp,                dtype=wp.vec3,    device=device)
+    wp_siteq  = wp.array(siteq,             dtype=wp.float32, device=device)
+    wp_hostq  = wp.array(hostq,             dtype=wp.float32, device=device)
+    wp_latmat = wp.array(lat_flat,          dtype=wp.float32, device=device)
+    wp_invmat = wp.array(inv_flat,          dtype=wp.float32, device=device)
+    wp_out    = wp.array(out_np,            dtype=wp.float32, device=device)
 
     wp.launch(wk, dim=Ng,
               inputs=[wp_grid, S, wp_site, wp_siteq, wp_host, wp_hostq,
                       float(sigma_eff), float(cutoff * cutoff), float(prefactor_K),
-                      use_mic, lat_a, lat_b, lat_c, inv_a, inv_b, inv_c],
+                      use_mic, wp_latmat, wp_invmat],
               outputs=[wp_out], device=device)
     return wp_out.numpy()
 
@@ -489,7 +491,8 @@ def morse_vext_grid_warp(
     else:
         out_np = np.ascontiguousarray(np.asarray(out, dtype=np.float32))
 
-    device = "cpu"
+    has_cuda = any(d.alias.startswith("cuda") for d in wp.get_devices())
+    device = "cuda:0" if has_cuda else "cpu"
     wp_grid   = wp.array(gp,     dtype=wp.vec3,    device=device)
     wp_host   = wp.array(hp,     dtype=wp.vec3,    device=device)
     wp_de     = wp.array(de,     dtype=wp.float32, device=device)

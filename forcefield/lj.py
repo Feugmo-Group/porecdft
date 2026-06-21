@@ -103,8 +103,6 @@ class LJPotential(Potential):
                         active[s_idx, h_idx] = 0
                         continue
                     active[s_idx, h_idx] = 1
-                    if label not in self.fluid_ff:
-                        continue          # charge-only site (e.g. TraPPE N₂ central 'M')
                     sigma, epsilon = self._pair_params(h_el, label)
                     sigma_ij[s_idx, h_idx] = sigma
                     epsilon_ij[s_idx, h_idx] = epsilon
