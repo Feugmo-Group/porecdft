@@ -86,30 +86,60 @@ class LJPotential(Potential):
                 total += 4.0 * epsilon * (sr6 * sr6 - sr6)
         return PotentialEnergy(total=total, parts={"LJ": total})
 
-    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels):
-        # Vectorized over grid + sites + host atoms in one shot.
-        grid = np.asarray(grid_xyz)               # (Ng, 3)
-        sites_lab = grid[:, None, :] + (fluid_sites @ rot.T)[None, :, :]  # (Ng, S, 3)
-        host_pos = host.positions                  # (Na, 3)
-        host_elements = host.species
-        total = np.zeros(len(grid), dtype=float)
-        cutoff2 = self.cutoff * self.cutoff
-        exc = self.exclude_species or frozenset()
-        for s_idx, label in enumerate(fluid_site_labels):
-            if label not in self.fluid_ff:
-                continue          # charge-only site (e.g. TraPPE N₂ central 'M')
-            site = sites_lab[:, s_idx, :]          # (Ng, 3)
-            dr = host_pos[None, :, :] - site[:, None, :]   # (Ng, Na, 3)
-            r2 = np.einsum("gad,gad->ga", dr, dr)          # (Ng, Na)
-            mask = (r2 < cutoff2) & (r2 > 0.0)
-            for h_idx, h_el in enumerate(host_elements):
-                if h_el in exc:
-                    continue
-                pair_mask = mask[:, h_idx]
-                if not np.any(pair_mask):
-                    continue
-                sigma, epsilon = self._pair_params(h_el, label)
-                r2_i = r2[pair_mask, h_idx]
-                sr6 = (sigma * sigma / r2_i) ** 3
-                total[pair_mask] += 4.0 * epsilon * (sr6 * sr6 - sr6)
+    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp):
+        if use_warp: # cal warp subroutine
+            from porecdft.warp_backend import lj_vext_grid_warp
+            # prepare tensor feed inte cuda kernel
+            host_elements = host.species
+            exc = self.exclude_species or frozenset()
+            S, Na = len(fluid_site_labels), len(host_elements)
+            sigma_ij = np.zeros((S, Na))
+            epsilon_ij = np.zeros((S, Na))
+            active = np.zeros((S, Na))
+            for s_idx, label in enumerate(fluid_site_labels):
+                for h_idx, h_el in enumerate(host_elements):
+                    # mirror exactly the CPU exclusion logic
+                    if label not in self.fluid_ff or h_el in exc:
+                        active[s_idx, h_idx] = 0
+                        continue
+                    active[s_idx, h_idx] = 1
+                    sigma, epsilon = self._pair_params(h_el, label)
+                    sigma_ij[s_idx, h_idx] = sigma
+                    epsilon_ij[s_idx, h_idx] = epsilon
+            site_offset = fluid_sites @ rot.T
+
+            return lj_vext_grid_warp(grid_xyz, 
+                                     site_offset, 
+                                     host.positions, 
+                                     sigma_ij,
+                                     epsilon_ij,
+                                     active,
+                                     self.cutoff
+                                     )
+        else: # numpy implementation
+            # Vectorized over grid + sites + host atoms in one shot.
+            grid = np.asarray(grid_xyz)               # (Ng, 3)
+            sites_lab = grid[:, None, :] + (fluid_sites @ rot.T)[None, :, :]  # (Ng, S, 3)
+            host_pos = host.positions                  # (Na, 3)
+            host_elements = host.species
+            total = np.zeros(len(grid), dtype=float)
+            cutoff2 = self.cutoff * self.cutoff
+            exc = self.exclude_species or frozenset()
+            for s_idx, label in enumerate(fluid_site_labels):
+                if label not in self.fluid_ff:
+                    continue          # charge-only site (e.g. TraPPE N₂ central 'M')
+                site = sites_lab[:, s_idx, :]          # (Ng, 3)
+                dr = host_pos[None, :, :] - site[:, None, :]   # (Ng, Na, 3)
+                r2 = np.einsum("gad,gad->ga", dr, dr)          # (Ng, Na)
+                mask = (r2 < cutoff2) & (r2 > 0.0)
+                for h_idx, h_el in enumerate(host_elements):
+                    if h_el in exc:
+                        continue
+                    pair_mask = mask[:, h_idx]
+                    if not np.any(pair_mask):
+                        continue
+                    sigma, epsilon = self._pair_params(h_el, label)
+                    r2_i = r2[pair_mask, h_idx]
+                    sr6 = (sigma * sigma / r2_i) ** 3
+                    total[pair_mask] += 4.0 * epsilon * (sr6 * sr6 - sr6)
         return total

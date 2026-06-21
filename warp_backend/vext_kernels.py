@@ -155,7 +155,7 @@ def _build_morse_kernel():
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 3. Gaussian-smeared Coulomb kernel
+# 3. Coulomb kernel — supports direct / smeared and optional MIC
 # ──────────────────────────────────────────────────────────────────────────
 
 def _build_coulomb_kernel():
@@ -166,18 +166,30 @@ def _build_coulomb_kernel():
     import warp as wp
 
     @wp.kernel
-    def smeared_coulomb_grid_kernel(
+    def coulomb_grid_kernel(
         grid_xyz:    wp.array(dtype=wp.vec3),       # (Ng,)
         n_sites:     int,
         site_offset: wp.array(dtype=wp.vec3),       # (S,) Å (already rotated)
         site_q:      wp.array(dtype=wp.float32),    # (S,) fluid-site charges (e)
-        host_pos:    wp.array(dtype=wp.vec3),       # (Na,) — replicated over PBC by caller
+        host_pos:    wp.array(dtype=wp.vec3),       # (Na,)
         host_q:      wp.array(dtype=wp.float32),    # (Na,)
-        sigma_eff:   float,                          # σ_eff (√2 σ) in Å
-        cutoff2:     float,
-        prefactor_K: float,                          # k_e · e² / k_B (K·Å) — converts q·q/r to K
+        sigma_eff:   float,                          # σ_eff in Å; set to 0.0 for direct (no erf)
+        cutoff2:     float,                          # Å²
+        prefactor_K: float,                          # K·Å — converts q·q/r to K
+        use_mic:     int,                            # 1 = apply minimum image convention
+        # MIC lattice and inverse as flat row-major float32 arrays of length 9
+        # lat_mat[3*i+j] = L[i,j];  inv_mat[3*i+j] = invL[i,j]
+        lat_mat: wp.array(dtype=wp.float32),
+        inv_mat: wp.array(dtype=wp.float32),
         out:         wp.array(dtype=wp.float32),
     ):
+        """Per-voxel Coulomb energy.  Each thread owns one grid voxel.
+
+        When ``use_mic=1`` the displacement dr is wrapped to the nearest
+        periodic image before the cutoff test and energy evaluation.
+        When ``sigma_eff <= 0`` bare Coulomb ``1/r`` is used (direct method);
+        otherwise the Gaussian-smeared formula ``erf(r/σ)/r`` is used.
+        """
         g = wp.tid()
         grid = grid_xyz[g]
         Na = host_pos.shape[0]
@@ -185,22 +197,48 @@ def _build_coulomb_kernel():
         for s in range(n_sites):
             pos = grid + site_offset[s]
             qs = site_q[s]
+            if qs == wp.float32(0.0):
+                continue
             for a in range(Na):
                 dr = host_pos[a] - pos
+
+                # Apply minimum image convention if requested
+                if use_mic == 1:
+                    # Fractional coordinates via rows of invL dotted with dr
+                    fx = inv_mat[0]*dr[0] + inv_mat[1]*dr[1] + inv_mat[2]*dr[2]
+                    fy = inv_mat[3]*dr[0] + inv_mat[4]*dr[1] + inv_mat[5]*dr[2]
+                    fz = inv_mat[6]*dr[0] + inv_mat[7]*dr[1] + inv_mat[8]*dr[2]
+                    # Wrap to [-0.5, 0.5)
+                    fx = fx - wp.round(fx)
+                    fy = fy - wp.round(fy)
+                    fz = fz - wp.round(fz)
+                    # Back to Cartesian: frac @ L (L rows are lattice vectors)
+                    dr = wp.vec3(
+                        fx*lat_mat[0] + fy*lat_mat[3] + fz*lat_mat[6],
+                        fx*lat_mat[1] + fy*lat_mat[4] + fz*lat_mat[7],
+                        fx*lat_mat[2] + fy*lat_mat[5] + fz*lat_mat[8],
+                    )
+
                 r2 = wp.dot(dr, dr)
-                if r2 > 0.0 and r2 < cutoff2:
-                    r = wp.sqrt(r2)
-                    erf_arg = r / sigma_eff
-                    v_total = v_total + prefactor_K * qs * host_q[a] / r * wp.erf(erf_arg)
+                if r2 <= wp.float32(0.0) or r2 >= cutoff2:
+                    continue
+                r = wp.sqrt(r2)
+                if sigma_eff > wp.float32(0.0):
+                    # Gaussian-smeared: phi = KE * erf(r/sigma) / r
+                    phi = prefactor_K * wp.erf(r / sigma_eff) / r
+                else:
+                    # Bare Coulomb: phi = KE / r
+                    phi = prefactor_K / r
+                v_total = v_total + qs * host_q[a] * phi
         out[g] = out[g] + v_total
 
-    _COULOMB_KERNEL = smeared_coulomb_grid_kernel
+    _COULOMB_KERNEL = coulomb_grid_kernel
 
     has_cuda = any(d.alias.startswith("cuda") for d in wp.get_devices())
     if has_cuda:
         from warp import jax_kernel
         _COULOMB_JAX_KERNEL = jax_kernel(
-            smeared_coulomb_grid_kernel, num_outputs=1, enable_backward=False
+            coulomb_grid_kernel, num_outputs=1, enable_backward=False
         )
     return _COULOMB_KERNEL, _COULOMB_JAX_KERNEL
 
@@ -312,7 +350,8 @@ def lj_vext_grid_warp(
     else:
         out_np = np.ascontiguousarray(np.asarray(out, dtype=np.float32))
 
-    device = "cpu"
+    has_cuda = any(d.alias.startswith("cuda") for d in wp.get_devices())
+    device = "cuda:0" if has_cuda else "cpu"
     wp_grid    = wp.array(gp,  dtype=wp.vec3,    device=device)
     wp_site    = wp.array(so,  dtype=wp.vec3,    device=device)
     wp_host    = wp.array(hp,  dtype=wp.vec3,    device=device)
@@ -325,6 +364,148 @@ def lj_vext_grid_warp(
               inputs=[wp_grid, S, wp_site, wp_host,
                       wp_sigma, wp_eps, wp_active,
                       float(cutoff * cutoff)],
+              outputs=[wp_out], device=device)
+    return wp_out.numpy()
+
+def coulomb_vext_grid_warp(
+    grid_xyz,
+    site_offset,
+    site_q,
+    host_pos,
+    host_q,
+    sigma_eff,        # > 0 for smeared Coulomb; 0.0 for bare direct Coulomb
+    prefactor_K,
+    cutoff,
+    out=None,
+    mic_lattice=None, # (3, 3) ndarray of lattice vectors; None = no MIC
+):
+    """Compute Coulomb V_ext on a 3D grid for one orientation via Warp.
+
+    Parameters
+    ----------
+    grid_xyz : (Ng, 3) array
+    site_offset : (S, 3) array — already-rotated fluid-site lab offsets, Å
+    site_q : (S,) array — fluid-site charges (e)
+    host_pos : (Na, 3) array — host atom positions, Å
+    host_q : (Na,) array — host charges (e)
+    sigma_eff : float — Gaussian smearing width (Å); 0.0 → bare direct Coulomb
+    prefactor_K : float — k_e e² / k_B in K·Å
+    cutoff : float — real-space cutoff, Å
+    out : (Ng,) array, optional — accumulated in-place; zero-initialised if None
+    mic_lattice : (3, 3) ndarray, optional — lattice matrix (rows = vectors) for MIC
+
+    Returns
+    -------
+    (Ng,) numpy array — Coulomb V_ext contribution in K.
+    """
+    if not WARP_AVAILABLE:
+        raise RuntimeError("warp-lang not installed.")
+    import numpy as np
+    import warp as wp
+    wk, _ = _build_coulomb_kernel()
+    Ng = grid_xyz.shape[0]
+    S = site_offset.shape[0]
+
+    gp    = np.ascontiguousarray(np.asarray(grid_xyz,    dtype=np.float32).reshape(-1, 3))
+    so    = np.ascontiguousarray(np.asarray(site_offset, dtype=np.float32).reshape(-1, 3))
+    hp    = np.ascontiguousarray(np.asarray(host_pos,    dtype=np.float32).reshape(-1, 3))
+    siteq = np.ascontiguousarray(np.asarray(site_q,      dtype=np.float32))
+    hostq = np.ascontiguousarray(np.asarray(host_q,      dtype=np.float32))
+    if out is None:
+        out_np = np.zeros(Ng, dtype=np.float32)
+    else:
+        out_np = np.ascontiguousarray(np.asarray(out, dtype=np.float32))
+
+    # Prepare MIC parameters as flat row-major float32 arrays (length 9)
+    if mic_lattice is not None:
+        L = np.asarray(mic_lattice, dtype=np.float32)   # (3, 3) rows = lattice vectors
+        invL = np.linalg.inv(L).astype(np.float32)
+        use_mic = 1
+        lat_flat = L.ravel()       # [L00, L01, L02, L10, L11, L12, L20, L21, L22]
+        inv_flat = invL.ravel()
+    else:
+        use_mic = 0
+        lat_flat = np.zeros(9, dtype=np.float32)
+        inv_flat = np.zeros(9, dtype=np.float32)
+
+    has_cuda = any(d.alias.startswith("cuda") for d in wp.get_devices())
+    device = "cuda:0" if has_cuda else "cpu"
+    wp_grid   = wp.array(gp,                dtype=wp.vec3,    device=device)
+    wp_site   = wp.array(so,                dtype=wp.vec3,    device=device)
+    wp_host   = wp.array(hp,                dtype=wp.vec3,    device=device)
+    wp_siteq  = wp.array(siteq,             dtype=wp.float32, device=device)
+    wp_hostq  = wp.array(hostq,             dtype=wp.float32, device=device)
+    wp_latmat = wp.array(lat_flat,          dtype=wp.float32, device=device)
+    wp_invmat = wp.array(inv_flat,          dtype=wp.float32, device=device)
+    wp_out    = wp.array(out_np,            dtype=wp.float32, device=device)
+
+    wp.launch(wk, dim=Ng,
+              inputs=[wp_grid, S, wp_site, wp_siteq, wp_host, wp_hostq,
+                      float(sigma_eff), float(cutoff * cutoff), float(prefactor_K),
+                      use_mic, wp_latmat, wp_invmat],
+              outputs=[wp_out], device=device)
+    return wp_out.numpy()
+
+
+def morse_vext_grid_warp(
+    grid_xyz, site_offset, host_pos,
+    D_e, alpha_w, r_e, active,
+    cutoff, out=None,
+):
+    """Compute Morse V_ext on a 3D grid for one orientation via Warp.
+
+    See :func:`_build_morse_kernel` for the underlying kernel.
+
+    Parameters
+    ----------
+    grid_xyz : (Ng, 3) array
+    site_offset : (3,) array — already-rotated single fluid-site lab offset, Å
+    host_pos : (Na, 3) array
+    D_e : (Na,) array — Morse well depth, K
+    alpha_w : (Na,) array — Morse curvature, 1/Å
+    r_e : (Na,) array — Morse equilibrium distance, Å
+    active : (Na,) int array (1=metal site, 0=skip)
+    cutoff : float, Å
+    out : optional (Ng,) array — accumulated in-place if given, else zero-init.
+
+    Returns
+    -------
+    (Ng,) numpy array — V_ext contribution from Morse, in K.
+    """
+    if not WARP_AVAILABLE:
+        raise RuntimeError("warp-lang not installed.")
+    import numpy as np
+    import warp as wp
+    wk, _ = _build_morse_kernel()
+    Ng = grid_xyz.shape[0]
+
+    gp  = np.ascontiguousarray(np.asarray(grid_xyz,   dtype=np.float32).reshape(-1, 3))
+    hp  = np.ascontiguousarray(np.asarray(host_pos,   dtype=np.float32).reshape(-1, 3))
+    de  = np.ascontiguousarray(np.asarray(D_e,        dtype=np.float32))
+    aw  = np.ascontiguousarray(np.asarray(alpha_w,    dtype=np.float32))
+    re  = np.ascontiguousarray(np.asarray(r_e,        dtype=np.float32))
+    act = np.ascontiguousarray(np.asarray(active,     dtype=np.int32))
+    so  = np.asarray(site_offset, dtype=np.float32).ravel()
+    if out is None:
+        out_np = np.zeros(Ng, dtype=np.float32)
+    else:
+        out_np = np.ascontiguousarray(np.asarray(out, dtype=np.float32))
+
+    has_cuda = any(d.alias.startswith("cuda") for d in wp.get_devices())
+    device = "cuda:0" if has_cuda else "cpu"
+    wp_grid   = wp.array(gp,     dtype=wp.vec3,    device=device)
+    wp_host   = wp.array(hp,     dtype=wp.vec3,    device=device)
+    wp_de     = wp.array(de,     dtype=wp.float32, device=device)
+    wp_aw     = wp.array(aw,     dtype=wp.float32, device=device)
+    wp_re     = wp.array(re,     dtype=wp.float32, device=device)
+    wp_active = wp.array(act,    dtype=wp.int32,   device=device)
+    wp_out    = wp.array(out_np, dtype=wp.float32, device=device)
+    wp_so     = wp.vec3(float(so[0]), float(so[1]), float(so[2]))
+
+    wp.launch(wk, dim=Ng,
+              inputs=[wp_grid, wp_so, wp_host,
+                      wp_de, wp_aw, wp_re, wp_active,
+                      float(cutoff)],
               outputs=[wp_out], device=device)
     return wp_out.numpy()
 
