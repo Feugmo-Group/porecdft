@@ -14,6 +14,7 @@ from porecdft.functional.association import (
 )
 from porecdft.functional.fmt import (
     FMTFunctional,
+    FMTWeightsHat,
     WeightedDensities,
     make_k_grid,
     make_fmt_weights_hat,
@@ -21,6 +22,9 @@ from porecdft.functional.fmt import (
     free_energy_density,
     compute_c1,
     bulk_c1,
+    make_fmt_weights_hat_multi,
+    compute_weighted_densities_multi,
+    compute_c1_multi,
 )
 from porecdft.functional import fmt_weights
 from porecdft.functional.elastic import ElasticPenalty, scale_host
@@ -30,6 +34,7 @@ __all__ = [
     "AssociationSite",
     "WertheimAssociation",
     "FMTFunctional",
+    "FMTWeightsHat",
     "WeightedDensities",
     "make_k_grid",
     "make_fmt_weights_hat",
@@ -37,6 +42,9 @@ __all__ = [
     "free_energy_density",
     "compute_c1",
     "bulk_c1",
+    "make_fmt_weights_hat_multi",
+    "compute_weighted_densities_multi",
+    "compute_c1_multi",
     "fmt_weights",
     "ElasticPenalty",
     "scale_host",

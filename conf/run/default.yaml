@@ -1,0 +1,20 @@
+# @package _global_.run
+temperature_K: 298.0
+p_min_bar:     0.1
+p_max_bar:     50.0
+n_pressure:    13
+p_log_space:   true
+save_figure:   true
+figure_dpi:    180
+
+# ── Experiment tracking ───────────────────────────────────────────────────
+# Each run is saved under:
+#   outputs/<experiment>/<date>_<time>/
+#     .hydra/          ← full config snapshot + overrides (Hydra built-in)
+#     vext_*.npy       ← Vext grid cache (checkpoint — reused on re-run)
+#     isotherm.npz     ← N(P) arrays, rho grids for each pressure point
+#     *.png            ← figures
+#
+# Set experiment to any descriptive label; it becomes the top-level folder.
+# Hydra appends the date/time subdirectory automatically via output_subdir.
+experiment:    tutorial_06_ch4_c2h6

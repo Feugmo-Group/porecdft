@@ -1,0 +1,4 @@
+# @package _global_.host
+cif:           2_3_Dha_Tph.cif
+ff_dat:        DREIDING.dat
+charge_method: zero

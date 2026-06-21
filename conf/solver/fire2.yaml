@@ -1,0 +1,12 @@
+# @package _global_.solver
+# FIRE2 gradient-descent solver — useful when Anderson oscillates at high η.
+_target_:   porecdft.solver.fire2.fire2_solve
+dt_start:   0.02
+dt_max:     0.5
+N_min:      5
+f_inc:      1.1
+f_dec:      0.5
+alpha_start: 0.1
+f_alpha:    0.99
+max_iter:   2000
+tol:        0.1
