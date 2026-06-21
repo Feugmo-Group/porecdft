@@ -147,24 +147,32 @@ class CoulombPotential(Potential):
         return PotentialEnergy(total=total, parts={"Coulomb": total})
 
     def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp):
-        if use_warp: # call warp subrountine
-            from porecdft.warp_backend import coulomb_vext_grid_warp
-            # prepare tensor feed into warp kernel
-            site_offset = fluid_sites @ rot.T
-            actual_host = self.host_override if self.host_override is not None else host
-            host_q = actual_host.charges
-            host_pos = actual_host.positions
-            site_q = np.array([self.fluid_charges.get(label, 0.0) for label in fluid_site_labels])
-            sigma_eff = self.gauss_width
-            prefactor_K = COULOMB_K_KELVIN_ANGSTROM
-            return coulomb_vext_grid_warp(grid_xyz, 
-                                          site_offset, 
-                                          site_q,
-                                          host_pos,
-                                          host_q,  
-                                          sigma_eff,
-                                          prefactor_K,
-                                          self.cutoff)
+        if use_warp:
+            if self.method == "wolf":
+                # Wolf summation has no warp kernel; fall back to NumPy
+                use_warp = False
+            else:
+                from porecdft.warp_backend import coulomb_vext_grid_warp
+                site_offset = fluid_sites @ rot.T
+                actual_host = self.host_override if self.host_override is not None else host
+                host_q = actual_host.charges
+                host_pos = actual_host.positions
+                site_q = np.array([self.fluid_charges.get(label, 0.0)
+                                    for label in fluid_site_labels])
+                # sigma_eff=0.0 signals the kernel to use bare 1/r (direct Coulomb)
+                sigma_eff = self.gauss_width if self.method == "smeared" else 0.0
+                prefactor_K = COULOMB_K_KELVIN_ANGSTROM
+                return coulomb_vext_grid_warp(
+                    grid_xyz,
+                    site_offset,
+                    site_q,
+                    host_pos,
+                    host_q,
+                    sigma_eff,
+                    prefactor_K,
+                    self.cutoff,
+                    mic_lattice=self.mic_lattice,  # None if not set → no MIC in kernel
+                )
 
         else: # numpy implementation
             actual_host = self.host_override if self.host_override is not None else host
