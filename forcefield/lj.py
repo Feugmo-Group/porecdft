@@ -91,13 +91,18 @@ class LJPotential(Potential):
             from porecdft.warp_backend import lj_vext_grid_warp
             # prepare tensor feed inte cuda kernel
             host_elements = host.species
+            exc = self.exclude_species or frozenset()
             S, Na = len(fluid_site_labels), len(host_elements)
             sigma_ij = np.zeros((S, Na))
             epsilon_ij = np.zeros((S, Na))
-            active = np.zeros((S, Na))            
+            active = np.zeros((S, Na))
             for s_idx, label in enumerate(fluid_site_labels):
                 for h_idx, h_el in enumerate(host_elements):
-                    active[s_idx, h_idx] = label in self.fluid_ff
+                    # mirror exactly the CPU exclusion logic
+                    if label not in self.fluid_ff or h_el in exc:
+                        active[s_idx, h_idx] = 0
+                        continue
+                    active[s_idx, h_idx] = 1
                     if label not in self.fluid_ff:
                         continue          # charge-only site (e.g. TraPPE N₂ central 'M')
                     sigma, epsilon = self._pair_params(h_el, label)
