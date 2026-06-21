@@ -1,0 +1,12 @@
+# @package _global_.solver
+# Anderson mixing — conservative parameters that work for both chain and
+# monomer PC-SAFT fluids at any pressure (validated in Tutorial 06).
+_target_:        porecdft.solver.anderson.anderson_solve
+m:               6
+beta:            0.15
+max_iter:        2000
+tol:             0.1      # L∞ in log-density space; float32 PC-SAFT floor ~0.05
+safeguard_alpha: 0.02
+picard_warmup:   100
+step_clip:       0.5
+log_clip:        15.0

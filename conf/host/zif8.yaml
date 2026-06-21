@@ -1,0 +1,4 @@
+# @package _global_.host
+cif:           ZIF-8.cif
+ff_dat:        DREIDING.dat
+charge_method: zero

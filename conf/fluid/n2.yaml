@@ -1,0 +1,4 @@
+# @package _global_.fluid
+name:       n2
+cutoff_lj:  15.0
+forcefield: dreiding

@@ -1,0 +1,4 @@
+# @package _global_.fluid
+name:       ethane
+cutoff_lj:  15.0
+forcefield: dreiding
