@@ -41,10 +41,14 @@ push)
     ;;
 
 pull)
-    echo "── Pulling results from ${REMOTE}:${REMOTE_DIR}/results/ ──"
+    echo "── Pulling results/figures from ${REMOTE}:${REMOTE_DIR}/applications/ ──"
     rsync -avz --progress \
-        "${REMOTE}:${REMOTE_DIR}/results/" \
-        "${LOCAL_DIR}/results/"
+        --include='*/' \
+        --include='results/***' \
+        --include='figures/***' \
+        --exclude='*' \
+        "${REMOTE}:${REMOTE_DIR}/applications/" \
+        "${LOCAL_DIR}/applications/"
     echo "Done. Results synced."
     ;;
 
