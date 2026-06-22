@@ -54,8 +54,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from porecdft.solver.fire2 import FExcMode, _gl_nodes  # shared helpers
-
 try:
     import equinox as eqx            # type: ignore[import]
     EQX_AVAILABLE = True
@@ -200,7 +198,6 @@ def _make_solver_class():
         tol: float = eqx.field(static=True)
         log_clip: float = eqx.field(static=True)
         print_every: int = eqx.field(static=True)
-        quadrature: bool = eqx.field(static=True)
 
         def __init__(
             self,
@@ -209,14 +206,12 @@ def _make_solver_class():
             tol: float = 1e-5,
             log_clip: float = 25.0,
             print_every: int = 0,
-            quadrature: bool = False,
         ):
             self.optimizer = optimizer if optimizer is not None else _optax.adam(5e-3)
             self.n_steps = n_steps
             self.tol = tol
             self.log_clip = log_clip
             self.print_every = print_every
-            self.quadrature = quadrature
 
         def solve(
             self,
@@ -232,7 +227,6 @@ def _make_solver_class():
             n_quad: int = 4,
         ) -> JaxSolverResult:
             """Run the minimisation and return a JaxSolverResult."""
-            quadrature = self.quadrature
             log_rho_bulk = float(np.log(rho_bulk + 1e-300))
             lo = log_rho_bulk - self.log_clip
             hi = log_rho_bulk + self.log_clip
@@ -370,7 +364,6 @@ def jax_solve(
         tol=tol,
         log_clip=log_clip,
         print_every=print_every,
-        quadrature = quadrature
     )
     return solver.solve(
         rho_init, rho_bulk, Vext_K, temperature_K,

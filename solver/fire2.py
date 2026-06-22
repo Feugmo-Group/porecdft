@@ -48,11 +48,12 @@ from typing import Callable, Literal
 import jax.numpy as jnp
 import numpy as np
 
+from porecdft.solver.jax_solver import F_ex_quadrature
+
 FExcMode = Literal["endpoint", "rpa", "quadrature"]
 
 # Pre-computed Gauss-Legendre nodes/weights on [0, 1] for n = 2, 3, 4, 5.
 _GL_NODES: dict[int, tuple[np.ndarray, np.ndarray]] = {}
-
 
 def _gl_nodes(n: int) -> tuple[np.ndarray, np.ndarray]:
     """GL nodes and weights on [0, 1] for *n* quadrature points."""
@@ -100,6 +101,7 @@ def _omega_fn(
     rho_min: float,
     f_exc_mode: FExcMode = "endpoint",
     n_quad: int = 4,
+    debug: bool = False,
 ) -> jnp.ndarray:
     """Grand potential Ω[exp(ψ)] as a JAX scalar.
 
@@ -132,15 +134,20 @@ def _omega_fn(
         c1 = jnp.asarray(c1_callable(rho))
         f_exc = 0.5 * jnp.sum((-c1 + c1_bulk) * rho) * dV
 
-    else:  # "quadrature"
-        # Gauss-Legendre quadrature over adiabatic path λ ∈ [0,1].
-        # Unrolled at trace time → single XLA graph; GPU-compatible.
-        lam_nodes, lam_weights = _gl_nodes(n_quad)
-        f_exc = jnp.zeros(())
-        for lam_i, w_i in zip(lam_nodes, lam_weights):
-            lam_i_j = jnp.asarray(lam_i)
-            c1_lam = jnp.asarray(c1_callable(lam_i_j * rho))
-            f_exc = f_exc + w_i * jnp.sum((-c1_lam + c1_bulk) * rho) * dV
+    else:  # "quadrature"     
+        f_exc = F_ex_quadrature(rho, c1_callable, c1_bulk, dV)
+        if debug:
+            # Gauss-Legendre quadrature over adiabatic path λ ∈ [0,1].
+            # Unrolled at trace time → single XLA graph; GPU-compatible.
+            lam_nodes, lam_weights = _gl_nodes(n_quad)
+            tmp = jnp.zeros(())
+            for lam_i, w_i in zip(lam_nodes, lam_weights):
+                lam_i_j = jnp.asarray(lam_i)
+                c1_lam = jnp.asarray(c1_callable(lam_i_j * rho))
+                tmp = tmp + w_i * jnp.sum((-c1_lam + c1_bulk) * rho) * dV
+            print(f_exc - tmp)
+            # assert jnp.isclose(f_exc, tmp, rtol=1e-5), "Quadrature mismatch: check c1_callable is JAX-traceable"
+
 
     return f_id + f_exc + f_ext
 
