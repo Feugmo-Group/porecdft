@@ -40,8 +40,11 @@ class CompositePotential(Potential):
                 parts[key] = v
         return PotentialEnergy(total=total, parts=parts)
 
-    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels):
+    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp):
         out = np.zeros(len(grid_xyz), dtype=float)
         for comp in self.components:
-            out = out + comp.energy_grid(grid_xyz, rot, host, fluid_sites, fluid_site_labels)
+            if comp.name == "QuadrupoleEFG": # no warp implementation of quadrapoleEFG forcefield
+                out + comp.energy_grid(grid_xyz, rot, host, fluid_sites, fluid_site_labels)
+            else:
+                out = out + comp.energy_grid(grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp)
         return out
