@@ -240,29 +240,29 @@ def build_vext_on_grid(
           flush=True)
     t0 = time.time()
     for k, rot in enumerate(orientations):
-        if _use_warp_path:
-            sigma_ij, epsilon_ij, active_mask, lj_cutoff = _lj_warp_arrays
-            site_offset_lab = np.ascontiguousarray(
-                fluid.body_sites @ rot.T, dtype=np.float32
-            )
-            v_k = lj_vext_grid_warp(
-                _grid_xyz_f32, site_offset_lab, _host_pos_f32,
-                sigma_ij, epsilon_ij, active_mask, lj_cutoff,
-                device=_warp_device,
-            ).astype(_dtype)
-            for comp in _non_lj_comps:
-                v_k = v_k + np.asarray(
-                    comp.energy_grid(grid_xyz, rot, host_super,
-                                     fluid.body_sites, fluid.site_labels),
-                    dtype=_dtype,
-                )
-        else:
-            v_k = np.asarray(
-                potential.energy_grid(
-                    grid_xyz, rot, host_super, fluid.body_sites, fluid.site_labels
-                ),
-                dtype=_dtype,
-            )
+        # if _use_warp_path:
+            # sigma_ij, epsilon_ij, active_mask, lj_cutoff = _lj_warp_arrays
+            # site_offset_lab = np.ascontiguousarray(
+                # fluid.body_sites @ rot.T, dtype=np.float32
+            # )
+            # v_k = lj_vext_grid_warp(
+                # _grid_xyz_f32, site_offset_lab, _host_pos_f32,
+                # sigma_ij, epsilon_ij, active_mask, lj_cutoff,
+            # ).astype(_dtype)
+            # for comp in _non_lj_comps:
+                # print(comp.name)
+                # v_k = v_k + np.asarray(
+                    # comp.energy_grid(grid_xyz, rot, host_super,
+                                    #  fluid.body_sites, fluid.site_labels, _use_warp),
+                    # dtype=_dtype,
+                # )
+        # else:
+        v_k = np.asarray(
+            potential.energy_grid(
+                grid_xyz, rot, host_super, fluid.body_sites, fluid.site_labels, _use_warp
+            ),
+            dtype=_dtype,
+        )
         # Reject (orient, voxel) pairs with unphysically deep V — they come from
         # rigid EPM2 sites accidentally landing on top of framework atoms in
         # specific orientations (point-charge Coulomb singularity, LJ tail). The

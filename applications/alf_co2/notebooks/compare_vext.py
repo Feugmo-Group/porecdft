@@ -48,6 +48,7 @@ from porecdft.io.forcefield import FFEntry
 from porecdft.io import read_cif, read_charges_csv
 from porecdft.structure import build_supercell
 from porecdft.vext import build_vext_on_grid, build_grid, fibonacci_rotations
+from porecdft.compute_config import ComputeConfig
 
 OUT_FIG = DATA_DIR / "figures"
 OUT_RES = DATA_DIR / "results"
@@ -125,6 +126,10 @@ def main():
         runtime = time.time()
         print(f"  Building Vext on grid from cpu...")
         cache = OUT_CACHE / f"vext_avg_T{T:.0f}K_cpu.npy"
+        compute_config = ComputeConfig(use_warp    = False,
+                                       warp_device = "cpu",
+                                       jax_device  = "cpu",
+                                       dtype       = "float64")
         data = build_vext_on_grid(
             host, co2, vtot,
             orientations=rots, spacing=spacing,
@@ -133,8 +138,9 @@ def main():
             v_reject_below_K=-10000.0,
             v_cap_above_K=5000,          # no upper cap — let +/- contributions cancel
             averaging="boltzmann",      # stable with O(50) orientations; Boltzmann needs O(500+)
-            use_warp=False   
+            compute = compute_config
         )
+        elapsed = time.time() - runtime 
         elapsed = time.time() - runtime 
         vext_runtime[f"cpu_T{T:.0f}K"] = [elapsed]
         vext_avg_cpu = np.asarray(data["vext_avg"])
@@ -142,6 +148,10 @@ def main():
         runtime = time.time()
         print(f"  Building Vext on grid from gpu...")
         cache = OUT_CACHE / f"vext_avg_T{T:.0f}K_gpu.npy"
+        compute_config = ComputeConfig(use_warp    = True,
+                                       warp_device = "gpu",
+                                       jax_device  = "gpu",
+                                       dtype       = "float64")
         data = build_vext_on_grid(
             host, co2, vtot,
             orientations=rots, spacing=spacing,
@@ -150,7 +160,7 @@ def main():
             v_reject_below_K=-10000.0,
             v_cap_above_K=5000,          # no upper cap — let +/- contributions cancel
             averaging="boltzmann",      # stable with O(50) orientations; Boltzmann needs O(500+)
-            use_warp=True
+            compute = compute_config
         )
         elapsed = time.time() - runtime 
         vext_runtime[f"gpu_T{T:.0f}K"] = [elapsed]
