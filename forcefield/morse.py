@@ -24,6 +24,7 @@ class MorseParam:
     D_e: float       # K
     a: float         # 1/Å
     r_e: float       # Å
+    cutoff: float    # Å
 
 
 @dataclass(frozen=True)
@@ -39,17 +40,20 @@ class MorsePotential(Potential):
         ``LJPotential(..., exclude_species=frozenset({"Zn", "Ni"}))``
     """
     host_params: dict[str, MorseParam]
-    fluid_params: dict[str, MorseParam]
-    cutoff: float = 15.0
+    fluid_params: dict[str, MorseParam] | None = None
     include_species: frozenset | None = None
     name: str = "Morse"
+    cutoff: float = 15.0
 
     def _pair(self, host_el: str, fluid_label: str) -> tuple[float, float, float]:
         a = self.host_params[host_el]
-        b = self.fluid_params[fluid_label]
-        D_e = float(np.sqrt(a.D_e * b.D_e))
-        alpha = 0.5 * (a.a + b.a)
-        r_e = 0.5 * (a.r_e + b.r_e)
+        if self.fluid_params is not None: 
+            b = self.fluid_params[fluid_label]
+            D_e = float(np.sqrt(a["D_e"] * b["D_e"]))
+            alpha = 0.5 * (a["a"] + b["a"])
+            r_e = 0.5 * (a.r_e + b["r_e"])
+        else: # in the case that not gas morse parameters, just use metal site parameters
+            D_e, alpha, r_e = a["D_e"], a["a"], a["r_e"]
         return D_e, alpha, r_e
 
     def energy_at(self, r_center, rot, host, fluid_sites, fluid_site_labels) -> PotentialEnergy:
@@ -57,6 +61,7 @@ class MorsePotential(Potential):
         sites_lab = r_center + fluid_sites @ rot.T
         total = 0.0
         inc = self.include_species
+        cutoff = self.cutoff
         for s_idx, label in enumerate(fluid_site_labels):
             site_pos = sites_lab[s_idx]
             for h_idx, h_el in enumerate(host.species):
@@ -66,14 +71,53 @@ class MorsePotential(Potential):
                     continue
                 dr = host.positions[h_idx] - site_pos
                 r2 = float(dr @ dr)
-                if r2 > self.cutoff * self.cutoff or r2 == 0.0:
+                D_e, alpha, r_e = self._pair(h_el, label)
+                if r2 > cutoff * cutoff or r2 == 0.0:
                     continue
                 r = float(np.sqrt(r2))
-                D_e, alpha, r_e = self._pair(h_el, label)
-                x = np.exp(-alpha * (r - r_e))
-                total += D_e * (x * x - 2.0 * x)
-        return PotentialEnergy(total=total, parts={"Morse": total})
 
+                x = np.exp(-alpha * (r - r_e))
+                v_pair = D_e * (x * x - 2.0 * x)
+                # Clamp to physical range
+                if v_pair < -D_e:
+                    v_pair = -D_e
+                total += v_pair
+        return PotentialEnergy(total=total, parts={"Morse": total})
+    
+    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp):
+        """overwrite based object implementation, include options that calls warp kernel"""
+        if use_warp:
+            # call warp kernel to build morse potential
+            from porecdft.warp_backend import morse_vext_grid_warp
+
+            # prepare tensors feed into cuda kernel
+            host_elements = host.species
+            exc = not self.include_species or frozenset()
+            S, Na = len(fluid_site_labels), len(host_elements)
+
+            site_offset = fluid_sites @ rot.T
+            host_pos = host.positions
+            cutoff = self.cutoff            
+            # loop over each site of the fluid
+            energy = np.zeros(grid_xyz.shape[0], dtype=float)
+            for s_idx, label in enumerate(fluid_site_labels):
+                D_e, alpha_w, r_e = np.zeros(Na), np.zeros(Na), np.zeros(Na)
+                active = np.ones(Na)
+                for h_idx, h_el in enumerate(host_elements):
+                    if exc is not None or hel not in self.host_params:
+                        active[h_idx] = 0 
+                        continue 
+                    D_e[h_idx], alpha_w[h_idx], r_e[h_idx] = self._pair(h_el, label)
+
+                energy += morse_vext_grid_warp(grid_xyz, site_offset[s_idx], host_pos, D_e, alpha_w, r_e, active, cutoff)
+            
+            return energy 
+        
+        else: # numpy implementation (same as base)
+            out = np.empty(len(grid_xyz), dtype=float)
+            for i, r in enumerate(grid_xyz):
+                out[i] = self.energy_at(r, rot, host, fluid_sites, fluid_site_labels).total
+            return out
 
 @dataclass(frozen=True)
 class MorseScalarPotential:

@@ -114,17 +114,17 @@ def _build_morse_kernel():
     @wp.kernel
     def morse_vext_grid_kernel(
         grid_xyz:    wp.array(dtype=wp.vec3),       # (Ng,)
-        site_offset: wp.vec3,                       # single fluid site offset (s_α) Å (already rotated)
+        site_offset: wp.array(dtype=wp.vec3),       # (1,) single fluid site offset (s_α) Å (already rotated)
         host_pos:    wp.array(dtype=wp.vec3),       # (Na,)
         D_e:         wp.array(dtype=wp.float32),    # (Na,) well depth in K
         alpha_w:     wp.array(dtype=wp.float32),    # (Na,) curvature 1/Å
         r_e:         wp.array(dtype=wp.float32),    # (Na,) equilibrium distance Å
         active:      wp.array(dtype=wp.int32),      # (Na,) 1 = metal site, 0 = skip
-        cutoff:      float,                          # Å
-        out:         wp.array(dtype=wp.float32),     # (Ng,) accumulator (K)
+        cutoff:      float,                         # Å
+        out:         wp.array(dtype=wp.float32),    # (Ng,) accumulator (K)
     ):
         g = wp.tid()
-        pos = grid_xyz[g] + site_offset
+        pos = grid_xyz[g] + site_offset[0]
         v = wp.float32(0.0)
         Na = host_pos.shape[0]
         for a in range(Na):
@@ -459,7 +459,7 @@ def morse_vext_grid_warp(
     Parameters
     ----------
     grid_xyz : (Ng, 3) array
-    site_offset : (3,) array — already-rotated single fluid-site lab offset, Å
+    site_offset : (3, ) array — already-rotated single fluid-site lab offset, Å
     host_pos : (Na, 3) array
     D_e : (Na,) array — Morse well depth, K
     alpha_w : (Na,) array — Morse curvature, 1/Å
@@ -485,7 +485,8 @@ def morse_vext_grid_warp(
     aw  = np.ascontiguousarray(np.asarray(alpha_w,    dtype=np.float32))
     re  = np.ascontiguousarray(np.asarray(r_e,        dtype=np.float32))
     act = np.ascontiguousarray(np.asarray(active,     dtype=np.int32))
-    so  = np.asarray(site_offset, dtype=np.float32).ravel()
+    so  = np.ascontiguousarray(np.asarray(site_offset, dtype=np.float32).reshape(-1, 3))
+
     if out is None:
         out_np = np.zeros(Ng, dtype=np.float32)
     else:
@@ -500,8 +501,9 @@ def morse_vext_grid_warp(
     wp_re     = wp.array(re,     dtype=wp.float32, device=device)
     wp_active = wp.array(act,    dtype=wp.int32,   device=device)
     wp_out    = wp.array(out_np, dtype=wp.float32, device=device)
-    wp_so     = wp.vec3(float(so[0]), float(so[1]), float(so[2]))
-
+    wp_so     = wp.array(so,     dtype=wp.vec3,    device=device)
+    # print(wp_so.shape)
+    # print(wp_grid.shape)
     wp.launch(wk, dim=Ng,
               inputs=[wp_grid, wp_so, wp_host,
                       wp_de, wp_aw, wp_re, wp_active,
