@@ -54,8 +54,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from porecdft.solver.fire2 import FExcMode, _gl_nodes  # shared helpers
-
 try:
     import equinox as eqx            # type: ignore[import]
     EQX_AVAILABLE = True
@@ -81,6 +79,37 @@ class JaxSolverResult:
     omega_history: list[float]
     error_history: list[float]
 
+def F_ex_quadrature(rho: jnp.ndarray,
+                    c1_callable: Callable[[jnp.ndarray], jnp.ndarray],
+                    c1_bulk: float,
+                    dV: float,
+                    n_quad: int = 8,
+                    ):
+    """
+    calculate excess free energy functional from quadrature rule
+    """
+    def integrant(l):
+        rho_l = l * rho
+        # avoid singularites ate rho=0
+        rho_l = jax.lax.cond(
+                 jnp.allclose(rho_l, jnp.zeros_like(rho)),
+                 lambda _: rho_l + 1e-12,
+                 lambda _: rho_l,
+                operand=None
+                )
+        c1 = c1_callable(rho_l)
+        return jnp.sum((-c1 + c1_bulk) * rho) * dV
+
+    grids, wts = np.polynomial.legendre.leggauss(n_quad) # calcuate Legendre quadrature weights
+    # transform to the range [0, 1]
+    a, b = 0.0, 1.0
+    grids = 0.5 * (b - a) * grids + 0.5 * (a + b)
+    wts = 0.5 * (b - a) * wts
+    # convert to jnp array
+    grids = jnp.asarray(grids)
+    wts = jnp.asarray(wts)
+    vals = jax.vmap(integrant)(grids)
+    return jnp.sum(wts*vals)
 
 # ── Grand potential (pure JAX, differentiable) ───────────────────────────────
 
@@ -134,11 +163,7 @@ def grand_potential_jax(
         f_exc = 0.5 * jnp.sum((-c1 + c1_bulk) * rho) * dV
 
     else:  # "quadrature"
-        lam_nodes, lam_weights = _gl_nodes(n_quad)
-        f_exc = jnp.zeros(())
-        for lam_i, w_i in zip(lam_nodes, lam_weights):
-            c1_lam = c1_callable(jnp.asarray(lam_i) * rho)
-            f_exc = f_exc + w_i * jnp.sum((-c1_lam + c1_bulk) * rho) * dV
+        f_exc = F_ex_quadrature(rho, c1_callable, c1_bulk, dV)
 
     return f_id + f_exc + f_ext
 
@@ -267,6 +292,9 @@ def _make_solver_class():
                 ):
                     print(f"  step {i:4d}  Ω = {omega_f:.6g}  "
                           f"|ΔΩ|/|Ω| = {rel_delta:.2e}")
+                if not jnp.isfinite(omega_f):
+                    print("Warning: grand potential diverges!")
+                    break
 
                 if i >= min_iters and rel_delta < self.tol:
                     small_step_streak += 1

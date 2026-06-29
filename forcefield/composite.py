@@ -43,5 +43,9 @@ class CompositePotential(Potential):
     def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp=False):
         out = np.zeros(len(grid_xyz), dtype=float)
         for comp in self.components:
-            out = out + comp.energy_grid(grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp)
+            if comp.name == "QuadrupoleEFG":
+                # No Warp implementation of QuadrupoleEFG yet -- fall back to NumPy path
+                out = out + comp.energy_grid(grid_xyz, rot, host, fluid_sites, fluid_site_labels)
+            else:
+                out = out + comp.energy_grid(grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp)
         return out
