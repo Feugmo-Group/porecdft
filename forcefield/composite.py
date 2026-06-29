@@ -40,7 +40,7 @@ class CompositePotential(Potential):
                 parts[key] = v
         return PotentialEnergy(total=total, parts=parts)
 
-    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp):
+    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp=False):
         out = np.zeros(len(grid_xyz), dtype=float)
         for comp in self.components:
             out = out + comp.energy_grid(grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp)

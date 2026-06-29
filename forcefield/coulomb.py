@@ -146,7 +146,7 @@ class CoulombPotential(Potential):
             total += float(q_s * (host_q[mask] * phi).sum())
         return PotentialEnergy(total=total, parts={"Coulomb": total})
 
-    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp):
+    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp=False):
         if use_warp:
             if self.method == "wolf":
                 # Wolf summation has no warp kernel; fall back to NumPy
