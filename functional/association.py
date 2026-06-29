@@ -42,6 +42,9 @@ from typing import Sequence
 
 import numpy as np
 
+import jax
+import jax.numpy as jnp
+
 
 @dataclass(frozen=True)
 class AssociationSite:
@@ -146,21 +149,30 @@ class WertheimAssociation:
                     ), dtype=float)
             except Exception:
                 pass  # fall through to NumPy path
-
         # NumPy reference path
         flat_rho = rho_grid.ravel()
         flat_xyz = grid_xyz.reshape(-1, 3)
-        rho_bar = np.empty(len(self.sites))
-        for i, s in enumerate(self.sites):
-            dr = flat_xyz - s.position
-            r2 = np.einsum("nd,nd->n", dr, dr)
-            inside = r2 <= s.radius_A ** 2
+        rho_bar = jnp.empty(len(self.sites))
+
+        # implement vmap version
+        def rho_func(site, radius, k):
+            dr = flat_xyz - site
+            r2 = jnp.einsum("nd,nd->n", dr, dr)
+            inside = r2 <= radius ** 2
             n_inside = inside.sum()
-            if n_inside == 0:
-                rho_bar[i] = 0.0
-            else:
-                # ρ̄_s * κ_s = Σ_{r∈Ω_s} ρ(r) dV  (no /κ_s)
-                rho_bar[i] = float(flat_rho[inside].sum() * dV_A3) / s.kappa_A3
+            return jax.lax.cond(
+            jnp.allclose(n_inside, 0.),
+            lambda _: 0.0,
+            lambda _: jnp.where(inside, flat_rho, 0.0).sum() * dV_A3 / k,
+            operand=None
+            )
+
+        # prepare vector to feed into vmap
+        pos_vec = jnp.array([s.position for s in self.sites])
+        r_vec = jnp.array([s.radius_A for s in self.sites])
+        k_vec = jnp.array([s.kappa_A3 for s in self.sites])
+        rho_bar= jax.vmap(rho_func)(pos_vec, r_vec, k_vec)
+
         return rho_bar
 
     def fraction_unbound(
@@ -204,7 +216,7 @@ class WertheimAssociation:
 
     def c1_correction(
         self,
-        rho_grid: np.ndarray,
+        rho_grid: jnp.ndarray,
         grid_xyz: np.ndarray,
         dV_A3: float,
         T_K: float,
@@ -228,7 +240,10 @@ class WertheimAssociation:
             dr = flat_xyz - s.position
             r2 = np.einsum("nd,nd->n", dr, dr)
             inside = r2 <= s.radius_A ** 2
-            c1_flat[inside] += c1_contribution
+            # musk =
+            c1_flat += c1_contribution * inside
+            # c1_flat = jnp.where(inside, c1_flat_rho, 0.0).sum()
+
         return c1_flat.reshape(rho_grid.shape)
 
     def effective_vext(
