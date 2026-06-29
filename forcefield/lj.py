@@ -86,7 +86,7 @@ class LJPotential(Potential):
                 total += 4.0 * epsilon * (sr6 * sr6 - sr6)
         return PotentialEnergy(total=total, parts={"LJ": total})
 
-    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp):
+    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp=False):
         if use_warp: # cal warp subroutine
             from porecdft.warp_backend import lj_vext_grid_warp
             # prepare tensor feed inte cuda kernel
