@@ -13,6 +13,7 @@ from porecdft.forcefield.coulomb import CoulombPotential
 from porecdft.forcefield.quadrupole import QuadrupoleEFGPotential
 from porecdft.forcefield.composite import CompositePotential
 from porecdft.forcefield import mlip  # noqa: F401  (adapter module)
+from porecdft.forcefield.mlip import TabulatedPotential
 
 __all__ = [
     "Potential",
@@ -24,5 +25,6 @@ __all__ = [
     "CoulombPotential",
     "QuadrupoleEFGPotential",
     "CompositePotential",
+    "TabulatedPotential",
     "mlip",
 ]
