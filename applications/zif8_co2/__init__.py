@@ -23,7 +23,7 @@ Pressures  : 0.05 – 50 bar
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parents[2]
+_REPO_ROOT = _HERE.parents[1]   # .../porecdft/ (structure/ lives here)
 
 ZIF8_CIF  = _REPO_ROOT / "structure" / "mofs" / "cif" / "ZIF-8.cif"
 DATA_DIR  = _HERE
