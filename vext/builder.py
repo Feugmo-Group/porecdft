@@ -240,8 +240,28 @@ def build_vext_on_grid(
           flush=True)
     t0 = time.time()
     for k, rot in enumerate(orientations):
-        v_k = potential.energy_grid(
-            grid_xyz, rot, host_super, fluid.body_sites, fluid.site_labels, use_warp
+        # if _use_warp_path:
+            # sigma_ij, epsilon_ij, active_mask, lj_cutoff = _lj_warp_arrays
+            # site_offset_lab = np.ascontiguousarray(
+                # fluid.body_sites @ rot.T, dtype=np.float32
+            # )
+            # v_k = lj_vext_grid_warp(
+                # _grid_xyz_f32, site_offset_lab, _host_pos_f32,
+                # sigma_ij, epsilon_ij, active_mask, lj_cutoff,
+            # ).astype(_dtype)
+            # for comp in _non_lj_comps:
+                # print(comp.name)
+                # v_k = v_k + np.asarray(
+                    # comp.energy_grid(grid_xyz, rot, host_super,
+                                    #  fluid.body_sites, fluid.site_labels, _use_warp),
+                    # dtype=_dtype,
+                # )
+        # else:
+        v_k = np.asarray(
+            potential.energy_grid(
+                grid_xyz, rot, host_super, fluid.body_sites, fluid.site_labels, _use_warp
+            ),
+            dtype=_dtype,
         )
         # Reject (orient, voxel) pairs with unphysically deep V — they come from
         # rigid EPM2 sites accidentally landing on top of framework atoms in
@@ -288,12 +308,18 @@ def build_vext_on_grid(
                 np.where(n_finite > 0, v_sum / np.maximum(n_finite, 1.0), +np.inf),
             )
         else:
-            if use_warp:
+            # Boltzmann-weighted free-energy average: −T ln⟨exp(−βV)⟩_Ω.
+            # Requires many orientations (≥200) to converge for tight binding pockets.
+            if _use_warp: # call warp subroutine for boltzman averging
                 from porecdft.warp_backend import boltzmann_orient_avg_warp
-                v_avg = np.asarray(boltzmann_orient_avg_warp(all_v, temperature_K, v_reject_below_K, v_cap_above_K))
-            else:
-                # Boltzmann-weighted free-energy average: −T ln⟨exp(−βV)⟩_Ω.
-                # Requires many orientations (≥200) to converge for tight binding pockets.
+                v_avg =  boltzmann_orient_avg_warp(v_per_orient = all_v, 
+                                                   T_K = temperature_K,
+                                                   v_min_clip = v_reject_below_K,
+                                                   v_max_clip = v_cap_above_K
+                                                )      
+   
+            
+            else: # numpy implementation
                 beta = 1.0 / temperature_K
                 shifted = np.where(finite_mask, all_v - np.where(all_inf, 0.0, v_min_grid)[None, :], +1e30)
                 boltz = np.exp(-beta * shifted)
