@@ -144,14 +144,10 @@ def _build_morse_kernel():
         out[g] = out[g] + v
 
     _MORSE_KERNEL = morse_vext_grid_kernel
-
-    has_cuda = any(d.alias.startswith("cuda") for d in wp.get_devices())
-    if has_cuda:
-        from warp import jax_kernel
-        _MORSE_JAX_KERNEL = jax_kernel(
-            morse_vext_grid_kernel, num_outputs=1, enable_backward=False
-        )
-    return _MORSE_KERNEL, _MORSE_JAX_KERNEL
+    # wp.vec3 kernel args are not supported by jax_kernel (JAX FFI only accepts
+    # arrays and scalars).  morse_vext_grid_warp uses wp.launch directly, so
+    # no JAX kernel is needed here.
+    return _MORSE_KERNEL, None
 
 
 # ──────────────────────────────────────────────────────────────────────────
