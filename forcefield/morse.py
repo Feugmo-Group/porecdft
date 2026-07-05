@@ -38,18 +38,27 @@ class MorsePotential(Potential):
         with an LJPotential that handles the organic backbone:
         ``LJPotential(..., exclude_species=frozenset({"Zn", "Ni"}))``
     """
-    host_params: dict[str, MorseParam]
-    fluid_params: dict[str, MorseParam]
+    host_params: dict[str, "MorseParam | dict"]
+    fluid_params: dict[str, "MorseParam | dict"] | None = None
     cutoff: float = 15.0
     include_species: frozenset | None = None
     name: str = "Morse"
 
+    @staticmethod
+    def _get(p, key: str) -> float:
+        """Read a param field from either a MorseParam dataclass or a dict."""
+        return float(getattr(p, key)) if hasattr(p, key) else float(p[key])
+
     def _pair(self, host_el: str, fluid_label: str) -> tuple[float, float, float]:
         a = self.host_params[host_el]
+        # If no fluid params are given, treat host entries as direct pair parameters
+        # (e.g. Sun-style tabulated metal–H2 Morse from the literature).
+        if self.fluid_params is None or fluid_label not in self.fluid_params:
+            return self._get(a, "D_e"), self._get(a, "a"), self._get(a, "r_e")
         b = self.fluid_params[fluid_label]
-        D_e = float(np.sqrt(a.D_e * b.D_e))
-        alpha = 0.5 * (a.a + b.a)
-        r_e = 0.5 * (a.r_e + b.r_e)
+        D_e   = float(np.sqrt(self._get(a, "D_e") * self._get(b, "D_e")))
+        alpha = 0.5 * (self._get(a, "a")   + self._get(b, "a"))
+        r_e   = 0.5 * (self._get(a, "r_e") + self._get(b, "r_e"))
         return D_e, alpha, r_e
 
     def energy_at(self, r_center, rot, host, fluid_sites, fluid_site_labels) -> PotentialEnergy:
@@ -73,6 +82,71 @@ class MorsePotential(Potential):
                 x = np.exp(-alpha * (r - r_e))
                 total += D_e * (x * x - 2.0 * x)
         return PotentialEnergy(total=total, parts={"Morse": total})
+
+    def energy_grid(self, grid_xyz, rot, host, fluid_sites, fluid_site_labels, use_warp=False):
+        """Vectorized Morse V_ext over a 3D grid.
+
+        Mirrors the CPU logic of ``energy_at`` exactly. When ``use_warp=True``
+        and a Warp kernel is available, the per-atom evaluation is dispatched
+        to the GPU (falls back to Warp's CPU device when CUDA is missing).
+        """
+        host_elements = host.species
+        inc = self.include_species
+        Ng = grid_xyz.shape[0]
+
+        if use_warp:
+            from porecdft.warp_backend import morse_vext_grid_warp
+
+            Na = len(host_elements)
+            site_offsets = fluid_sites @ rot.T   # (S, 3) — one row per fluid site
+            out = np.zeros(Ng, dtype=np.float32)
+
+            for s_idx, label in enumerate(fluid_site_labels):
+                # Per-atom mixed pair parameters and active mask.
+                # Same filter as CPU path: skip atoms outside include_species
+                # OR without an entry in host_params (e.g. LJ-only elements).
+                D_e_arr   = np.zeros(Na, dtype=np.float32)
+                alpha_arr = np.zeros(Na, dtype=np.float32)
+                r_e_arr   = np.zeros(Na, dtype=np.float32)
+                active    = np.zeros(Na, dtype=np.int32)
+                for h_idx, h_el in enumerate(host_elements):
+                    if inc is not None and h_el not in inc:
+                        continue
+                    if h_el not in self.host_params:
+                        continue
+                    D_e_arr[h_idx], alpha_arr[h_idx], r_e_arr[h_idx] = self._pair(h_el, label)
+                    active[h_idx] = 1
+
+                out = morse_vext_grid_warp(
+                    grid_xyz, site_offsets[s_idx], host.positions,
+                    D_e_arr, alpha_arr, r_e_arr, active,
+                    self.cutoff, out=out,
+                )
+            return out.astype(float)
+
+        # numpy path — vectorized version of energy_at
+        grid = np.asarray(grid_xyz)
+        sites_lab = grid[:, None, :] + (fluid_sites @ rot.T)[None, :, :]   # (Ng, S, 3)
+        host_pos = host.positions
+        total = np.zeros(Ng, dtype=float)
+        cutoff2 = self.cutoff * self.cutoff
+        for s_idx, label in enumerate(fluid_site_labels):
+            site = sites_lab[:, s_idx, :]                              # (Ng, 3)
+            dr = host_pos[None, :, :] - site[:, None, :]               # (Ng, Na, 3)
+            r2 = np.einsum("gad,gad->ga", dr, dr)                      # (Ng, Na)
+            for h_idx, h_el in enumerate(host_elements):
+                if inc is not None and h_el not in inc:
+                    continue
+                if h_el not in self.host_params:
+                    continue
+                pair_mask = (r2[:, h_idx] < cutoff2) & (r2[:, h_idx] > 0.0)
+                if not np.any(pair_mask):
+                    continue
+                D_e, alpha, r_e = self._pair(h_el, label)
+                r = np.sqrt(r2[pair_mask, h_idx])
+                x = np.exp(-alpha * (r - r_e))
+                total[pair_mask] += D_e * (x * x - 2.0 * x)
+        return total
 
 
 @dataclass(frozen=True)
