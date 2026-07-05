@@ -10,12 +10,12 @@
 #SBATCH --output=logs/compare_vext_%j.out
 #SBATCH --error=logs/compare_vext_%j.err
 
-# Validate CPU vs GPU Vext agreement for CO2/ALF.
-# Runs compare_vext.py which builds Vext with both backends and asserts
-# np.allclose(vext_cpu, vext_gpu, atol=1e-5). Fails loudly if mismatch.
+# Validate CPU vs GPU Vext agreement for H2/COF (Morse + LJ composite potential).
+# Runs compare_vext.py which builds Vext with both CPU-numpy and warp-GPU backends
+# and asserts np.allclose(vext_cpu, vext_gpu, atol=1.0, rtol=1e-3). Fails loudly if mismatch.
 #
-# This is the regression test for the warp bug fix (MIC, bare-Coulomb,
-# exclude_species) committed in WTPT1_vmap branch.
+# This is the regression test for the Morse warp kernel fix (fluid_params=None,
+# include_species filtering, dict-or-dataclass _get helper) on the warp branch.
 #
 # Submit:
 #   sbatch scripts/slurm/02_compare_vext_gpu.sh
@@ -30,7 +30,7 @@ CONDA_ENV="jax"
 MODULE="nvhpc/26.3"
 
 cd "$PROJECT_ROOT"
-mkdir -p logs results/alf_co2/vext
+mkdir -p logs applications/h2_cof/results applications/h2_cof/figures
 
 echo "=================================================="
 echo "  Job ID : $SLURM_JOB_ID  |  Node: $SLURM_NODELIST"
@@ -44,7 +44,7 @@ conda activate "$CONDA_ENV"
 
 python -c "import warp as wp; wp.init(); print('Warp devices:', wp.get_preferred_device())"
 
-python applications/alf_co2/notebooks/compare_vext.py \
+python applications/h2_cof/notebooks/compare_vext.py \
     2>&1 | tee logs/compare_vext_${SLURM_JOB_ID}.log
 
 echo "=================================================="
