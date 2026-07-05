@@ -40,9 +40,9 @@ def get_warp_device(prefer: str = "cuda"):
 from porecdft.warp_backend.kernels import rho_bar_sphere_warp  # noqa: E402
 from porecdft.warp_backend.vext_kernels import (  # noqa: E402
     lj_vext_grid_warp,
+    morse_vext_grid_warp,
     coulomb_vext_grid_warp,
     boltzmann_orient_avg_warp,
-    coulomb_vext_grid_warp
 )
 
 __all__ = [
@@ -53,6 +53,7 @@ __all__ = [
     "rho_bar_sphere_warp",
     # Vext on 3D grid
     "lj_vext_grid_warp",
+    "morse_vext_grid_warp",
     "coulomb_vext_grid_warp",
     "boltzmann_orient_avg_warp",
 ]
