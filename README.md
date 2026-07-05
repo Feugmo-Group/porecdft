@@ -13,6 +13,7 @@ The package is host-agnostic and fluid-agnostic. Any analytic or machine-learnin
 
 - [Installation](#installation)
 - [Key physics: the grand-potential functional](#key-physics-the-grand-potential-functional)
+- [Machine-learning interatomic potentials (MLIP)](#machine-learning-interatomic-potentials-mlip)
 - [Solvers](#solvers)
 - [Quick start](#quick-start)
 - [Configuration system](#configuration-system)
@@ -122,7 +123,70 @@ Supported pair potentials (`forcefield/`):
 | `CoulombPotential` | Gaussian-smeared: `V = q_i q_j / r · erf(r / √2 σ_eff)` |
 | `QuadrupoleEFGPotential` | CO₂ quadrupole × framework EFG: `V = −⅓ Θ_αβ V_αβ^host` |
 | `MorsePotential` | Morse well for transition-metal sites: `V = D_e[(1−e^{−α(r−r_e)})²−1]` |
+| `TabulatedPotential` | Pre-computed V_ext grid from any source, trilinearly interpolated |
 | `CompositePotential` | Sum of any combination of the above |
+
+### Machine-learning interatomic potentials (MLIP)
+
+`TabulatedPotential` is the bridge between any MLIP and the cDFT solver. The workflow has three steps:
+
+**Step 1 — Compute V_ext on a coarse grid with the MLIP.**
+Any MLIP that implements an ASE/pymatgen calculator (MACE-MP-0, NequIP, Allegro, CHGNet, …) can be used. The orientation average is the rotational free energy, not a bare sum:
+
+```
+V_ext(r; T) = −k_B T ln [ (1/N_Ω) Σ_i exp(−β V_MLIP(r; Ω_i)) ]
+```
+
+For CO₂ in ZIF-8 with MACE-MP-0:
+
+```python
+from mace.calculators import MACECalculator
+from porecdft.vext import build_vext_on_grid, fibonacci_rotations
+
+calc = MACECalculator(model_paths="mace-mp-0-medium", device="cpu")
+data = build_vext_on_grid(
+    host, fluid, potential=MLIPPotential(calc),
+    orientations=fibonacci_rotations(20),   # N_Ω = 20 Fibonacci sphere
+    spacing=1.4,                             # Å  (< σ_HS / 2 satisfies FMT)
+    temperature_K=298.0,
+    cache_path="vext_mace_T298K.npy",
+)
+```
+
+The cached `.npy` file contains the orientation-averaged grid and the lattice.  Re-averaging at a new temperature costs only a numpy operation — no MLIP re-evaluation.
+
+**Step 2 — Load and interpolate at solver resolution.**
+`TabulatedPotential` wraps the cached array with trilinear interpolation, upsampling to any finer solver grid:
+
+```python
+from porecdft.forcefield import TabulatedPotential
+
+vext_data = np.load("vext_mace_T298K.npy", allow_pickle=True).item()
+pot = TabulatedPotential(
+    grid_values=vext_data["vext_avg"],
+    lattice=vext_data["lattice"],
+)
+```
+
+**Step 3 — Run the cDFT solver exactly as with analytic potentials.**
+
+```python
+from porecdft.solver import anderson_solve
+from porecdft.functional import make_fmt_weights_hat, compute_c1, bulk_c1
+
+result = anderson_solve(rho0, rho_bulk, vext3d, T_K,
+                        c1_callable, c1_bulk, ...)
+```
+
+**Validated example — CO₂ / ZIF-8 at 273, 298, 323 K** (`applications/zif8_co2/`):
+
+| T (K) | N_abs at 10 bar (mmol/g) | N_abs at 1 bar (mmol/g) |
+|--------|--------------------------|------------------------|
+| 273 | ~9.5 | ~4.2 |
+| 298 | ~7.6 | ~3.0 |
+| 323 | ~6.1 | ~2.0 |
+
+Scripts: `build_vext_mace.py` (MACE grid, ~5 h on 6 CPU cores, 12³ grid, N_Ω = 20) · `rebuild_vext_multi_T.py` (re-average at new T, seconds) · `make_isotherm_zif8_multi_T.py` (FMT-aWBII isotherm, ~72 s for all three T).
 
 ---
 
@@ -611,6 +675,7 @@ print(H2_FH.bulk_density(1.0,  77.0))   # quantum-corrected H₂ at 77 K
 
 | System | Fluid | Host | T (K) | P range | Functional | Solver | Script |
 |--------|-------|------|--------|---------|------------|--------|--------|
+| CO₂ / ZIF-8 (MACE-MP-0) | EPM2 CO₂ | ZIF-8 (cubic, 276 atoms) | 273, 298, 323 K | 0–25 bar | FMT-aWBII | Anderson | `applications/zif8_co2/` |
 | CO₂ / ALF | EPM2 CO₂ (LJ + Coulomb + quadrupole) | Al(HCOO)₃ cubic Im-3m | 278, 298, 318 K | 0–1 bar | FMT-aWBII + WDA + Wertheim TPT-1 + elastic | Anderson | `applications/alf_co2/` |
 | N₂ / ALF | TraPPE N₂ | Al(HCOO)₃ | 298 K | 0–1 bar | FMT-aWBII + WDA | Anderson | `applications/alf_co2/` |
 | H₂ / COF-301 | LJ H₂ + Morse (Co, Ni, Cu, Zn, Mn) | COF-301 | 77, 298 K | 0–100 bar | WDA-LJ + Morse | Anderson | `applications/h2_cof/` |
