@@ -128,6 +128,14 @@ Supported pair potentials (`forcefield/`):
 
 ### Machine-learning interatomic potentials (MLIP)
 
+Classical force fields (LJ, Coulomb, Morse) require empirical parameters for every host–adsorbate atom-type pair and assume pairwise-additive, geometry-fixed interactions. MLIPs remove these constraints: universal models such as MACE-MP-0, NequIP, Allegro, and CHGNet predict total interaction energies from atomic positions alone, capturing many-body polarization, open-shell metal-site effects, and framework flexibility without per-system parametrization.
+
+In porecdft the MLIP is used **only once**, in a pre-computation step, to fill a 3D Vext grid at the desired temperature. The cDFT solver never calls the MLIP during the pressure sweep — it reads the cached grid through `TabulatedPotential`. This separation keeps the solver fast while letting the potential be as expensive as needed.
+
+The `MLIPPotential` adapter (`forcefield/mlip.py`) wraps any ASE-compatible calculator into the `Potential` interface expected by `build_vext_on_grid`. It evaluates the total host + single-adsorbate-molecule energy at every grid point and every sampled orientation, subtracts the isolated-molecule reference, and stores the host–adsorbate interaction energy. Energy caps (`v_reject_below_K`, `v_cap_above_K`) remove unphysical divergences in the overlap regions before orientation averaging.
+
+The **temperature dependence** of the Vext grid is contained entirely in the Boltzmann-weighted orientation average, not in the per-orientation energies. This means that once the per-orientation energies are computed at a set of grid points, re-averaging at a new temperature is a seconds-long NumPy operation (`rebuild_vext_multi_T.py`) — no MLIP re-evaluation required.
+
 `TabulatedPotential` is the bridge between any MLIP and the cDFT solver. The workflow has three steps:
 
 **Step 1 — Compute V_ext on a coarse grid with the MLIP.**
