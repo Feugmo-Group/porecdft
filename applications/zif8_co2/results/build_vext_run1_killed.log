@@ -1,0 +1,191 @@
+Device: cpu   workers: 18
+Loading ZIF-8 from /Users/cgtetsas/Library/CloudStorage/OneDrive-UniversityofWaterloo/UWaterloo/Manuscript/2026/ALF/cDFT/porecdft/structure/mofs/cif/ZIF-8.cif
+ZIF-8: 276 atoms, cell = [16.991 16.991 16.991]
+Grid: (24, 24, 24) = 13824 points, dV = 0.355 Å³
+Computing hard-core mask (cutoff = 2.0 Å) …
+  5166/13824 accessible (37.4 %)
+Orientations: 20 Fibonacci directions
+Using cached MACE model: /Users/cgtetsas/.cache/mace/20231203mace128L1_epoch199model
+Computing 20 orientations with 18 workers …
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 05/20  pt 500/5166  ETA 356.9 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 03/20  pt 500/5166  ETA 358.9 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 17/20  pt 500/5166  ETA 359.2 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 07/20  pt 500/5166  ETA 359.6 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 06/20  pt 500/5166  ETA 359.7 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 10/20  pt 500/5166  ETA 359.9 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 08/20  pt 500/5166  ETA 359.9 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 14/20  pt 500/5166  ETA 360.0 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 16/20  pt 500/5166  ETA 360.0 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 11/20  pt 500/5166  ETA 360.0 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 02/20  pt 500/5166  ETA 360.3 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 09/20  pt 500/5166  ETA 360.3 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 04/20  pt 500/5166  ETA 360.4 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 13/20  pt 500/5166  ETA 360.6 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 01/20  pt 500/5166  ETA 360.9 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 18/20  pt 500/5166  ETA 361.1 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 15/20  pt 500/5166  ETA 361.5 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 12/20  pt 500/5166  ETA 361.8 min
+  orient 05/20  pt 1000/5166  ETA 317.4 min
+  orient 03/20  pt 1000/5166  ETA 318.2 min
+  orient 14/20  pt 1000/5166  ETA 318.7 min
+  orient 08/20  pt 1000/5166  ETA 318.9 min
+  orient 10/20  pt 1000/5166  ETA 319.0 min
+  orient 17/20  pt 1000/5166  ETA 319.1 min
+  orient 02/20  pt 1000/5166  ETA 319.9 min
+  orient 06/20  pt 1000/5166  ETA 319.9 min
+  orient 07/20  pt 1000/5166  ETA 319.9 min
+  orient 01/20  pt 1000/5166  ETA 320.2 min
+  orient 04/20  pt 1000/5166  ETA 320.2 min
+  orient 16/20  pt 1000/5166  ETA 320.1 min
+  orient 15/20  pt 1000/5166  ETA 320.3 min
+  orient 12/20  pt 1000/5166  ETA 320.6 min
+  orient 13/20  pt 1000/5166  ETA 320.7 min
+  orient 11/20  pt 1000/5166  ETA 320.7 min
+  orient 09/20  pt 1000/5166  ETA 320.8 min
+  orient 18/20  pt 1000/5166  ETA 320.8 min
+  orient 05/20  pt 1500/5166  ETA 281.1 min
+  orient 03/20  pt 1500/5166  ETA 281.9 min
+  orient 14/20  pt 1500/5166  ETA 281.9 min
+  orient 08/20  pt 1500/5166  ETA 282.2 min
+  orient 17/20  pt 1500/5166  ETA 282.4 min
+  orient 10/20  pt 1500/5166  ETA 282.4 min
+  orient 02/20  pt 1500/5166  ETA 283.2 min
+  orient 06/20  pt 1500/5166  ETA 283.4 min
+  orient 15/20  pt 1500/5166  ETA 283.4 min
+  orient 07/20  pt 1500/5166  ETA 283.4 min
+  orient 12/20  pt 1500/5166  ETA 283.7 min
+  orient 01/20  pt 1500/5166  ETA 283.7 min
+  orient 04/20  pt 1500/5166  ETA 283.8 min
+  orient 16/20  pt 1500/5166  ETA 283.9 min
+  orient 11/20  pt 1500/5166  ETA 284.1 min
+  orient 18/20  pt 1500/5166  ETA 284.3 min
+  orient 09/20  pt 1500/5166  ETA 284.3 min
+  orient 13/20  pt 1500/5166  ETA 284.4 min
+  orient 05/20  pt 2000/5166  ETA 242.5 min
+  orient 14/20  pt 2000/5166  ETA 243.0 min
+  orient 03/20  pt 2000/5166  ETA 243.1 min
+  orient 17/20  pt 2000/5166  ETA 243.4 min
+  orient 08/20  pt 2000/5166  ETA 243.4 min
+  orient 10/20  pt 2000/5166  ETA 243.5 min
+  orient 02/20  pt 2000/5166  ETA 244.2 min
+  orient 15/20  pt 2000/5166  ETA 244.3 min
+  orient 06/20  pt 2000/5166  ETA 244.3 min
+  orient 07/20  pt 2000/5166  ETA 244.4 min
+  orient 12/20  pt 2000/5166  ETA 244.6 min
+  orient 04/20  pt 2000/5166  ETA 244.7 min
+  orient 01/20  pt 2000/5166  ETA 244.8 min
+  orient 16/20  pt 2000/5166  ETA 244.9 min
+  orient 11/20  pt 2000/5166  ETA 245.0 min
+  orient 09/20  pt 2000/5166  ETA 245.1 min
+  orient 13/20  pt 2000/5166  ETA 245.3 min
+  orient 18/20  pt 2000/5166  ETA 245.3 min
+  orient 05/20  pt 2500/5166  ETA 262.8 min
+  orient 14/20  pt 2500/5166  ETA 263.3 min
+  orient 03/20  pt 2500/5166  ETA 263.5 min
+  orient 08/20  pt 2500/5166  ETA 263.5 min
+  orient 17/20  pt 2500/5166  ETA 263.6 min
+  orient 10/20  pt 2500/5166  ETA 263.7 min
+  orient 15/20  pt 2500/5166  ETA 264.2 min
+  orient 06/20  pt 2500/5166  ETA 264.3 min
+  orient 02/20  pt 2500/5166  ETA 264.3 min
+  orient 07/20  pt 2500/5166  ETA 264.5 min
+  orient 12/20  pt 2500/5166  ETA 264.5 min
+  orient 01/20  pt 2500/5166  ETA 264.7 min
+  orient 04/20  pt 2500/5166  ETA 264.7 min
+  orient 16/20  pt 2500/5166  ETA 264.9 min
+  orient 11/20  pt 2500/5166  ETA 265.1 min
+  orient 13/20  pt 2500/5166  ETA 265.2 min
+  orient 09/20  pt 2500/5166  ETA 265.3 min
+  orient 18/20  pt 2500/5166  ETA 265.3 min
+  orient 05/20  pt 3000/5166  ETA 205.2 min
+  orient 14/20  pt 3000/5166  ETA 205.7 min
+  orient 03/20  pt 3000/5166  ETA 205.8 min
+  orient 08/20  pt 3000/5166  ETA 205.9 min
+  orient 10/20  pt 3000/5166  ETA 205.9 min
+  orient 17/20  pt 3000/5166  ETA 206.0 min
+  orient 06/20  pt 3000/5166  ETA 206.3 min
+  orient 15/20  pt 3000/5166  ETA 206.4 min
+  orient 02/20  pt 3000/5166  ETA 206.5 min
+  orient 12/20  pt 3000/5166  ETA 206.6 min
+  orient 07/20  pt 3000/5166  ETA 206.6 min
+  orient 01/20  pt 3000/5166  ETA 206.7 min
+  orient 04/20  pt 3000/5166  ETA 206.7 min
+  orient 11/20  pt 3000/5166  ETA 206.8 min
+  orient 16/20  pt 3000/5166  ETA 207.0 min
+  orient 13/20  pt 3000/5166  ETA 207.2 min
+  orient 09/20  pt 3000/5166  ETA 207.2 min
+  orient 18/20  pt 3000/5166  ETA 207.3 min
+  orient 05/20  pt 3500/5166  ETA 153.6 min
+  orient 14/20  pt 3500/5166  ETA 153.9 min
+  orient 08/20  pt 3500/5166  ETA 154.0 min
+  orient 03/20  pt 3500/5166  ETA 154.1 min
+  orient 10/20  pt 3500/5166  ETA 154.1 min
+  orient 17/20  pt 3500/5166  ETA 154.1 min
+  orient 06/20  pt 3500/5166  ETA 154.4 min
+  orient 15/20  pt 3500/5166  ETA 154.4 min
+  orient 02/20  pt 3500/5166  ETA 154.5 min
+  orient 01/20  pt 3500/5166  ETA 154.6 min
+  orient 12/20  pt 3500/5166  ETA 154.6 min
+  orient 07/20  pt 3500/5166  ETA 154.7 min
+  orient 04/20  pt 3500/5166  ETA 154.7 min
+  orient 11/20  pt 3500/5166  ETA 154.8 min
+  orient 16/20  pt 3500/5166  ETA 155.0 min
+  orient 13/20  pt 3500/5166  ETA 155.1 min
+  orient 09/20  pt 3500/5166  ETA 155.1 min
+  orient 18/20  pt 3500/5166  ETA 155.3 min
+  orient 05/20  pt 4000/5166  ETA 114.5 min
+  orient 14/20  pt 4000/5166  ETA 114.7 min
+  orient 08/20  pt 4000/5166  ETA 119.7 min
+  orient 10/20  pt 4000/5166  ETA 119.8 min
+  orient 03/20  pt 4000/5166  ETA 119.8 min
+  orient 17/20  pt 4000/5166  ETA 119.8 min
+  orient 01/20  pt 4000/5166  ETA 120.0 min
+  orient 06/20  pt 4000/5166  ETA 120.0 min
+  orient 15/20  pt 4000/5166  ETA 120.0 min
+  orient 02/20  pt 4000/5166  ETA 120.0 min
+  orient 12/20  pt 4000/5166  ETA 120.1 min
+  orient 04/20  pt 4000/5166  ETA 120.1 min
+  orient 07/20  pt 4000/5166  ETA 120.2 min
+  orient 11/20  pt 4000/5166  ETA 125.1 min
+  orient 16/20  pt 4000/5166  ETA 125.2 min
+  orient 09/20  pt 4000/5166  ETA 125.2 min
+  orient 13/20  pt 4000/5166  ETA 125.3 min
+  orient 18/20  pt 4000/5166  ETA 125.4 min
+/opt/homebrew/Caskroom/miniconda/base/envs/jax/lib/python3.12/multiprocessing/resource_tracker.py:279: UserWarning: resource_tracker: There appear to be 6 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
