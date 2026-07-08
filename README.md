@@ -874,7 +874,9 @@ Scripts: `build_vext_mace.py` (MACE grid, ~4 h on 6 CPU cores, 12³ grid, N_Ω =
 
 If you use porecdft in your research, please cite:
 
-> Roy, A.; Tetsassi Feugmo, C. G. *A modular classical density-functional framework for gas adsorption in nanoporous materials.* 2026, in preparation.
+> Roy, A.; Mathanamohan, L.; Bao, S.; Tetsassi Feugmo, C. G. *A modular classical density-functional framework for gas adsorption in nanoporous materials: from first-principles binding energies to kinetic molecular sieving.* *J. Phys. Chem. C* **2026**, in press.
+
+Volume, issue, and page numbers will be added once the article is accepted and assigned by the journal.
 
 ---
 
