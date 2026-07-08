@@ -13,7 +13,6 @@ The package is host-agnostic and fluid-agnostic. Any analytic or machine-learnin
 
 - [Installation](#installation)
 - [Key physics: the grand-potential functional](#key-physics-the-grand-potential-functional)
-- [Machine-learning interatomic potentials (MLIP)](#machine-learning-interatomic-potentials-mlip)
 - [Solvers](#solvers)
 - [Quick start](#quick-start)
 - [Configuration system](#configuration-system)
@@ -21,6 +20,7 @@ The package is host-agnostic and fluid-agnostic. Any analytic or machine-learnin
 - [Equations of state](#equations-of-state)
 - [Systems tested](#systems-tested)
 - [GPU acceleration](#gpu-acceleration)
+- [Machine-learning interatomic potentials (MLIP)](#machine-learning-interatomic-potentials-mlip)
 - [Citation](#citation)
 
 ---
@@ -130,186 +130,6 @@ Supported pair potentials (`forcefield/`):
 | `TabulatedPotential` | Pre-computed V_ext grid from any source, trilinearly interpolated |
 | `CompositePotential` | Sum of any combination of the above |
 
-### Machine-learning interatomic potentials (MLIP)
-
-Classical force fields (LJ, Coulomb, Morse) require empirical parameters for every host–adsorbate atom-type pair and assume pairwise-additive, geometry-fixed interactions. MLIPs remove these constraints: universal models such as MACE-MP-0, NequIP, Allegro, and CHGNet predict total interaction energies from atomic positions alone, capturing many-body polarization, open-shell metal-site effects, and framework flexibility without per-system parametrization.
-
-In porecdft the MLIP is used **only once**, in a pre-computation step, to fill a 3D Vext grid at the desired temperature. The cDFT solver never calls the MLIP during the pressure sweep — it reads the cached grid through `TabulatedPotential`. This separation keeps the solver fast while letting the potential be as expensive as needed.
-
-The `ASEPotential` adapter (`forcefield/mlip.py`) wraps any ASE-compatible calculator into the `Potential` interface. It places a fluid molecule at a grid point, calls the calculator to get the total energy of the host + molecule system, and subtracts the isolated host and molecule reference energies to obtain the interaction energy. Grid points inside the hard-core radius of any framework atom are excluded before the MLIP is ever called, preventing unphysical divergences.
-
-The **temperature dependence** of the Vext grid lives entirely in the Boltzmann-weighted orientation average, not in the per-orientation energies. The raw per-orientation interaction energies are temperature-independent; only the averaging step uses T. This means re-averaging at a new temperature is a seconds-long NumPy operation (`rebuild_vext_multi_T.py`) — no MLIP re-evaluation required.
-
-`TabulatedPotential` (`forcefield/mlip.py`) is the bridge between the cached MLIP grid and the cDFT solver. It wraps the 3D array with trilinear interpolation and periodic boundary conditions, presenting it through the same `Potential` interface as `LJPotential` or `CoulombPotential`. The solver never knows — or needs to know — that the potential came from an MLIP rather than an analytic formula.
-
-#### What MACE-MP-0 is and where it comes from
-
-MACE-MP-0 is a universal neural-network interatomic potential trained on the Materials Project database (73 elements, DFT/PBE energies). It takes a list of atomic species and Cartesian positions and returns a total energy and forces. Unlike classical force fields it requires no per-system parameter fitting — the same model handles ZIF-8, ALF, zeolites, and most inorganic materials out of the box.
-
-The model checkpoint (~50 MB) is **not shipped in this repository** — large binary files do not belong in git. `MACECalculator` downloads it automatically to `~/.cache/mace/` the first time it is called. `build_vext_mace.py` handles this transparently: if the file is absent it downloads it in the main process before spawning workers.
-
-#### Installing MACE-MP-0 from scratch
-
-**Step A — Install the Python package**
-
-`mace-torch` is not part of the default porecdft install. Add it with:
-
-```bash
-# with uv (recommended — keeps your porecdft env intact)
-uv sync --extra mlip
-
-# or with pip directly into your active environment
-pip install "mace-torch>=0.3"
-```
-
-`mace-torch` pulls in PyTorch (≥ 2.0), ASE, e3nn, and several small utilities automatically. Tested with mace-torch 0.3.16 + torch 2.12.1.
-
-> **conda / jax environment note**: if you are using the project's `jax` conda env (`conda activate jax`), install with pip inside it:
-> ```bash
-> /opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/pip install "mace-torch>=0.3"
-> ```
-> Do not install via `conda install` — the conda-forge torch and pip-torch conflict.
-
-**Step B — Download the model checkpoint (one time, ~50 MB)**
-
-Run this once in Python (or just let `build_vext_mace.py` do it automatically):
-
-```python
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"   # needed on macOS
-
-from mace.calculators import MACECalculator
-calc = MACECalculator(model_paths="mace-mp-0-medium", device="cpu",
-                      default_dtype="float32")
-print("Model downloaded to ~/.cache/mace/")
-```
-
-Or from the command line:
-
-```bash
-KMP_DUPLICATE_LIB_OK=TRUE \
-  /opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/python -c "
-import os; os.environ['KMP_DUPLICATE_LIB_OK']='TRUE'
-from mace.calculators import MACECalculator
-MACECalculator(model_paths='mace-mp-0-medium', device='cpu', default_dtype='float32')
-print('done')
-"
-```
-
-The file lands in `~/.cache/mace/` with a name like `20231210mace128L0_energy_epoch249model`. Subsequent runs load it from cache with no network access.
-
-> **macOS OpenMP note**: PyTorch and some conda packages both ship `libomp.dylib`, causing an `OMP: Error #15` crash. The workaround `KMP_DUPLICATE_LIB_OK=TRUE` (already set in `build_vext_mace.py`) silences it safely for inference workloads.
-
-**Step C — Verify**
-
-```bash
-KMP_DUPLICATE_LIB_OK=TRUE \
-  /opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/python -c "
-import os; os.environ['KMP_DUPLICATE_LIB_OK']='TRUE'
-from mace.calculators import MACECalculator
-from ase import Atoms
-calc = MACECalculator(model_paths='mace-mp-0-medium', device='cpu', default_dtype='float32')
-h2o = Atoms('H2O', positions=[[0,0,0],[0,0,0.96],[0,0.96*0.866,0.96*0.5]], pbc=False)
-h2o.calc = calc
-print(f'H2O energy: {h2o.get_potential_energy():.4f} eV')   # expect ~ -14.8 eV
-print('MACE-MP-0 working.')
-"
-```
-
-#### Three-step pipeline
-
-**Step 1 — Pre-compute V_ext on a coarse grid (done once, ~4 h on 6 CPU cores)**
-
-`applications/zif8_co2/notebooks/build_vext_mace.py` carries out this step for CO₂ / ZIF-8. What it does:
-
-1. Loads ZIF-8 (276 atoms) from the CIF and builds a 12³ grid (spacing 1.4 Å, 1728 points) over the unit cell.
-2. Marks grid points within 2 Å of any framework atom as inaccessible (hard-core exclusion).
-3. Generates 20 quasi-uniform CO₂ orientations by Fibonacci-sphere sampling.
-4. For each orientation, places the 3-site rigid EPM2 CO₂ at every accessible grid point, calls MACE-MP-0, and records the interaction energy:
-   ```
-   E_int(r, Ω) = E(ZIF-8 + CO₂ at r with orientation Ω) − E(ZIF-8) − E(CO₂ in vacuum)
-   ```
-5. Boltzmann-averages the 20 per-orientation energies into a single V_ext(r; T):
-   ```
-   V_ext(r; T) = −k_B T · ln [ (1/20) Σ_Ω exp(−E_int(r, Ω) / k_B T) ]
-   ```
-6. Saves the 3D grid and lattice to `results/vext_cache/vext_mace_T298K.npy`.
-
-Each orientation is checkpointed to a shard so the run can be resumed if interrupted.
-
-To run:
-```bash
-cd porecdft
-/opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/python \
-    applications/zif8_co2/notebooks/build_vext_mace.py
-```
-
-**Step 2 — Load the cached grid**
-
-```python
-from porecdft.forcefield.mlip import TabulatedPotential
-
-pot = TabulatedPotential.from_cache(
-    "applications/zif8_co2/results/vext_cache/vext_mace_T298K.npy"
-)
-# pot.vext_3d  — shape (12, 12, 12), units K
-# pot.lattice  — (3, 3) unit-cell matrix in Å
-Vext_K = pot.vext_3d
-```
-
-The `from_cache` classmethod reads the `.npy` dict, validates the keys, and builds the `TabulatedPotential`. From this point the MLIP grid is indistinguishable from any other `Potential` object.
-
-**Step 3 — Run the cDFT pressure sweep**
-
-```python
-import numpy as np
-from porecdft.solver import anderson_solve
-from porecdft.functional import make_k_grid, make_fmt_weights_hat, compute_c1, bulk_c1
-from porecdft.eos import CO2_SW
-
-T_K     = 298.0
-SIGMA   = 3.017   # CO₂ EPM2 hard-sphere diameter (Å)
-RHO_MAX = 0.45 * 6.0 / (np.pi * SIGMA**3)
-
-Nx, Ny, Nz = Vext_K.shape
-Lx = Ly = Lz = np.linalg.norm(pot.lattice[0])   # ZIF-8 is cubic
-dV  = Lx * Ly * Lz / (Nx * Ny * Nz)
-
-KX, KY, KZ, K = make_k_grid((Nx, Ny, Nz), dx=Lx/Nx, dy=Ly/Ny, dz=Lz/Nz)
-w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(K, KX, KY, KZ, SIGMA)
-
-def c1_fn(rho):
-    from porecdft.functional import compute_weighted_densities
-    wd = compute_weighted_densities(rho, w2_hat, w3_hat, w2vec_hat, SIGMA)
-    return np.asarray(compute_c1(rho, wd, w2_hat, w3_hat, w2vec_hat, SIGMA, model="aWBII"))
-
-access = np.isfinite(Vext_K) & (Vext_K < 50.0 * T_K)
-rho_prev = rho_prev_b = None
-for P in [1.0, 5.0, 10.0, 25.0]:   # bar
-    rho_b = float(CO2_SW.bulk_density(P, T_K))
-    c1_b  = bulk_c1(rho_b, SIGMA, model="aWBII")
-    rho0  = (np.minimum(rho_b * np.exp(np.clip(-Vext_K / T_K, -50, 20)), RHO_MAX)
-             if rho_prev is None
-             else np.where(access, np.clip(rho_prev * rho_b / rho_prev_b, 1e-16, RHO_MAX), 1e-16))
-    res = anderson_solve(rho0, rho_b, Vext_K, T_K, c1_fn, c1_b,
-                         m=8, beta=0.1, max_iter=5000, tol=1e-6,
-                         accessibility_mask=access, rho_max=RHO_MAX)
-    N = float(res.rho.sum() * dV)
-    print(f"P = {P:5.1f} bar   N = {N:.3f} mol/u.c.   conv = {res.converged}")
-    rho_prev, rho_prev_b = res.rho.copy(), rho_b
-```
-
-**Validated example — CO₂ / ZIF-8 at 273, 298, 323 K** (`applications/zif8_co2/`):
-
-| T (K) | N_abs at 10 bar (mmol/g) | N_abs at 1 bar (mmol/g) |
-|--------|--------------------------|------------------------|
-| 273 | ~9.5 | ~4.2 |
-| 298 | ~7.6 | ~3.0 |
-| 323 | ~6.1 | ~2.0 |
-
-Scripts: `build_vext_mace.py` (MACE grid, ~4 h on 6 CPU cores, 12³ grid, N_Ω = 20) · `rebuild_vext_multi_T.py` (re-average at new T, seconds) · `make_isotherm_zif8_multi_T.py` (FMT-aWBII isotherm, ~72 s for all three T).
-
----
 
 ## Solvers
 
@@ -864,6 +684,189 @@ vext = build_vext_on_grid(..., compute=compute)
 ```
 
 See the [Configuration system](#configuration-system) section for the full `ComputeConfig` API and YAML layout.
+
+---
+
+---
+
+## Machine-learning interatomic potentials (MLIP)
+
+Classical force fields (LJ, Coulomb, Morse) require empirical parameters for every host–adsorbate atom-type pair and assume pairwise-additive, geometry-fixed interactions. MLIPs remove these constraints: universal models such as MACE-MP-0, NequIP, Allegro, and CHGNet predict total interaction energies from atomic positions alone, capturing many-body polarization, open-shell metal-site effects, and framework flexibility without per-system parametrization.
+
+In porecdft the MLIP is used **only once**, in a pre-computation step, to fill a 3D Vext grid at the desired temperature. The cDFT solver never calls the MLIP during the pressure sweep — it reads the cached grid through `TabulatedPotential`. This separation keeps the solver fast while letting the potential be as expensive as needed.
+
+The `ASEPotential` adapter (`forcefield/mlip.py`) wraps any ASE-compatible calculator into the `Potential` interface. It places a fluid molecule at a grid point, calls the calculator to get the total energy of the host + molecule system, and subtracts the isolated host and molecule reference energies to obtain the interaction energy. Grid points inside the hard-core radius of any framework atom are excluded before the MLIP is ever called, preventing unphysical divergences.
+
+The **temperature dependence** of the Vext grid lives entirely in the Boltzmann-weighted orientation average, not in the per-orientation energies. The raw per-orientation interaction energies are temperature-independent; only the averaging step uses T. This means re-averaging at a new temperature is a seconds-long NumPy operation (`rebuild_vext_multi_T.py`) — no MLIP re-evaluation required.
+
+`TabulatedPotential` (`forcefield/mlip.py`) is the bridge between the cached MLIP grid and the cDFT solver. It wraps the 3D array with trilinear interpolation and periodic boundary conditions, presenting it through the same `Potential` interface as `LJPotential` or `CoulombPotential`. The solver never knows — or needs to know — that the potential came from an MLIP rather than an analytic formula.
+
+### What MACE-MP-0 is and where it comes from
+
+MACE-MP-0 is a universal neural-network interatomic potential trained on the Materials Project database (73 elements, DFT/PBE energies). It takes a list of atomic species and Cartesian positions and returns a total energy and forces. Unlike classical force fields it requires no per-system parameter fitting — the same model handles ZIF-8, ALF, zeolites, and most inorganic materials out of the box.
+
+The model checkpoint (~50 MB) is **not shipped in this repository** — large binary files do not belong in git. `MACECalculator` downloads it automatically to `~/.cache/mace/` the first time it is called. `build_vext_mace.py` handles this transparently: if the file is absent it downloads it in the main process before spawning workers.
+
+### Installing MACE-MP-0 from scratch
+
+**Step A — Install the Python package**
+
+`mace-torch` is not part of the default porecdft install. Add it with:
+
+```bash
+# with uv (recommended — keeps your porecdft env intact)
+uv sync --extra mlip
+
+# or with pip directly into your active environment
+pip install "mace-torch>=0.3"
+```
+
+`mace-torch` pulls in PyTorch (≥ 2.0), ASE, e3nn, and several small utilities automatically. Tested with mace-torch 0.3.16 + torch 2.12.1.
+
+> **conda / jax environment note**: if you are using the project's `jax` conda env (`conda activate jax`), install with pip inside it:
+> ```bash
+> /opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/pip install "mace-torch>=0.3"
+> ```
+> Do not install via `conda install` — the conda-forge torch and pip-torch conflict.
+
+**Step B — Download the model checkpoint (one time, ~50 MB)**
+
+Run this once in Python (or just let `build_vext_mace.py` do it automatically):
+
+```python
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"   # needed on macOS
+
+from mace.calculators import MACECalculator
+calc = MACECalculator(model_paths="mace-mp-0-medium", device="cpu",
+                      default_dtype="float32")
+print("Model downloaded to ~/.cache/mace/")
+```
+
+Or from the command line:
+
+```bash
+KMP_DUPLICATE_LIB_OK=TRUE \
+  /opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/python -c "
+import os; os.environ['KMP_DUPLICATE_LIB_OK']='TRUE'
+from mace.calculators import MACECalculator
+MACECalculator(model_paths='mace-mp-0-medium', device='cpu', default_dtype='float32')
+print('done')
+"
+```
+
+The file lands in `~/.cache/mace/` with a name like `20231210mace128L0_energy_epoch249model`. Subsequent runs load it from cache with no network access.
+
+> **macOS OpenMP note**: PyTorch and some conda packages both ship `libomp.dylib`, causing an `OMP: Error #15` crash. The workaround `KMP_DUPLICATE_LIB_OK=TRUE` (already set in `build_vext_mace.py`) silences it safely for inference workloads.
+
+**Step C — Verify**
+
+```bash
+KMP_DUPLICATE_LIB_OK=TRUE \
+  /opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/python -c "
+import os; os.environ['KMP_DUPLICATE_LIB_OK']='TRUE'
+from mace.calculators import MACECalculator
+from ase import Atoms
+calc = MACECalculator(model_paths='mace-mp-0-medium', device='cpu', default_dtype='float32')
+h2o = Atoms('H2O', positions=[[0,0,0],[0,0,0.96],[0,0.96*0.866,0.96*0.5]], pbc=False)
+h2o.calc = calc
+print(f'H2O energy: {h2o.get_potential_energy():.4f} eV')   # expect ~ -14.8 eV
+print('MACE-MP-0 working.')
+"
+```
+
+### Three-step pipeline
+
+**Step 1 — Pre-compute V_ext on a coarse grid (done once, ~4 h on 6 CPU cores)**
+
+`applications/zif8_co2/notebooks/build_vext_mace.py` carries out this step for CO₂ / ZIF-8. What it does:
+
+1. Loads ZIF-8 (276 atoms) from the CIF and builds a 12³ grid (spacing 1.4 Å, 1728 points) over the unit cell.
+2. Marks grid points within 2 Å of any framework atom as inaccessible (hard-core exclusion).
+3. Generates 20 quasi-uniform CO₂ orientations by Fibonacci-sphere sampling.
+4. For each orientation, places the 3-site rigid EPM2 CO₂ at every accessible grid point, calls MACE-MP-0, and records the interaction energy:
+   ```
+   E_int(r, Ω) = E(ZIF-8 + CO₂ at r with orientation Ω) − E(ZIF-8) − E(CO₂ in vacuum)
+   ```
+5. Boltzmann-averages the 20 per-orientation energies into a single V_ext(r; T):
+   ```
+   V_ext(r; T) = −k_B T · ln [ (1/20) Σ_Ω exp(−E_int(r, Ω) / k_B T) ]
+   ```
+6. Saves the 3D grid and lattice to `results/vext_cache/vext_mace_T298K.npy`.
+
+Each orientation is checkpointed to a shard so the run can be resumed if interrupted.
+
+To run:
+```bash
+cd porecdft
+/opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/python \
+    applications/zif8_co2/notebooks/build_vext_mace.py
+```
+
+**Step 2 — Load the cached grid**
+
+```python
+from porecdft.forcefield.mlip import TabulatedPotential
+
+pot = TabulatedPotential.from_cache(
+    "applications/zif8_co2/results/vext_cache/vext_mace_T298K.npy"
+)
+# pot.vext_3d  — shape (12, 12, 12), units K
+# pot.lattice  — (3, 3) unit-cell matrix in Å
+Vext_K = pot.vext_3d
+```
+
+The `from_cache` classmethod reads the `.npy` dict, validates the keys, and builds the `TabulatedPotential`. From this point the MLIP grid is indistinguishable from any other `Potential` object.
+
+**Step 3 — Run the cDFT pressure sweep**
+
+```python
+import numpy as np
+from porecdft.solver import anderson_solve
+from porecdft.functional import make_k_grid, make_fmt_weights_hat, compute_c1, bulk_c1
+from porecdft.eos import CO2_SW
+
+T_K     = 298.0
+SIGMA   = 3.017   # CO₂ EPM2 hard-sphere diameter (Å)
+RHO_MAX = 0.45 * 6.0 / (np.pi * SIGMA**3)
+
+Nx, Ny, Nz = Vext_K.shape
+Lx = Ly = Lz = np.linalg.norm(pot.lattice[0])   # ZIF-8 is cubic
+dV  = Lx * Ly * Lz / (Nx * Ny * Nz)
+
+KX, KY, KZ, K = make_k_grid((Nx, Ny, Nz), dx=Lx/Nx, dy=Ly/Ny, dz=Lz/Nz)
+w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(K, KX, KY, KZ, SIGMA)
+
+def c1_fn(rho):
+    from porecdft.functional import compute_weighted_densities
+    wd = compute_weighted_densities(rho, w2_hat, w3_hat, w2vec_hat, SIGMA)
+    return np.asarray(compute_c1(rho, wd, w2_hat, w3_hat, w2vec_hat, SIGMA, model="aWBII"))
+
+access = np.isfinite(Vext_K) & (Vext_K < 50.0 * T_K)
+rho_prev = rho_prev_b = None
+for P in [1.0, 5.0, 10.0, 25.0]:   # bar
+    rho_b = float(CO2_SW.bulk_density(P, T_K))
+    c1_b  = bulk_c1(rho_b, SIGMA, model="aWBII")
+    rho0  = (np.minimum(rho_b * np.exp(np.clip(-Vext_K / T_K, -50, 20)), RHO_MAX)
+             if rho_prev is None
+             else np.where(access, np.clip(rho_prev * rho_b / rho_prev_b, 1e-16, RHO_MAX), 1e-16))
+    res = anderson_solve(rho0, rho_b, Vext_K, T_K, c1_fn, c1_b,
+                         m=8, beta=0.1, max_iter=5000, tol=1e-6,
+                         accessibility_mask=access, rho_max=RHO_MAX)
+    N = float(res.rho.sum() * dV)
+    print(f"P = {P:5.1f} bar   N = {N:.3f} mol/u.c.   conv = {res.converged}")
+    rho_prev, rho_prev_b = res.rho.copy(), rho_b
+```
+
+**Validated example — CO₂ / ZIF-8 at 273, 298, 323 K** (`applications/zif8_co2/`):
+
+| T (K) | N_abs at 10 bar (mmol/g) | N_abs at 1 bar (mmol/g) |
+|--------|--------------------------|------------------------|
+| 273 | ~9.5 | ~4.2 |
+| 298 | ~7.6 | ~3.0 |
+| 323 | ~6.1 | ~2.0 |
+
+Scripts: `build_vext_mace.py` (MACE grid, ~4 h on 6 CPU cores, 12³ grid, N_Ω = 20) · `rebuild_vext_multi_T.py` (re-average at new T, seconds) · `make_isotherm_zif8_multi_T.py` (FMT-aWBII isotherm, ~72 s for all three T).
 
 ---
 
