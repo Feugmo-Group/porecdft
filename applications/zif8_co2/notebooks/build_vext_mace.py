@@ -171,28 +171,28 @@ def _worker_orient(args):
     import torch
     from ase import Atoms as AseAtoms
 
-    R          = rotation_z_to(u)
+    R          = rotation_z_to(u)   # compute the rotation matrix that maps z onto orientiation of direction u 
     co2_body_R = CO2_BODY @ R.T     # (3, 3): rotated site offsets
 
     E_int = np.full(N_grid, np.inf, dtype=np.float32)
     n_acc = int(accessible.sum())
-    acc_idx = np.where(accessible)[0]
+    acc_idx = np.where(accessible)[0] # The actual integer indices where accessible is True
 
     # Pre-fetch host data as contiguous arrays to avoid repeated copies
     host_pos_c  = np.ascontiguousarray(host_pos)
-    co2_pos_buf = np.empty((3, 3), dtype=np.float64)
+    co2_pos_buf = np.empty((3, 3), dtype=np.float64) # pre-allocates a fixed-size (3,3) scratch buffer for the 3 CO2 atom positions at the current grid point.
 
     t0 = time.time()
     for k, j in enumerate(acc_idx):
         r0      = grid_xyz[j]
-        np.add(r0, co2_body_R, out=co2_pos_buf)   # in-place, no alloc
+        np.add(r0, co2_body_R, out=co2_pos_buf)   # in-place, no alloc translate the oriented CO2 template to be centered at this grid point.
         combined = AseAtoms(
-            symbols   = host_sym + CO2_SYMBOLS,
-            positions = np.vstack([host_pos_c, co2_pos_buf]),
-            cell      = cell,
+            symbols   = host_sym + CO2_SYMBOLS, # concatenate host symbols and gas molecule symbols
+            positions = np.vstack([host_pos_c, co2_pos_buf]),  # stacks host position and the 3 CO2 atom positions into one (N_host+3, 3) array
+            cell      = cell, 
             pbc       = True,
         )
-        combined.calc = _calc
+        combined.calc = _calc # attaches the calculator - _calc is the MACE model loaded one per worker process in _worker_init_
         E_comb   = combined.get_potential_energy()   # eV
         E_int[j] = float(E_comb - E_HOST_EV - E_CO2_VAC_EV)
 
@@ -201,7 +201,7 @@ def _worker_orient(args):
         _calc.atoms   = None
         _calc.results = {}
         if k % 50 == 0 and k > 0:
-            gc.collect()
+            gc.collect() # every 50 iterations, force a full garbage-colletion pass to actually reclaim the cycles broken above.
 
         if k % 100 == 0 and k > 0:
             elapsed = time.time() - t0
@@ -267,9 +267,16 @@ def main() -> None:
         print("MACE-MP-0 model not found in ~/.cache/mace/ — downloading now "
               "(one-time, ~50 MB) …", flush=True)
         import torch
-        from mace.calculators import MACECalculator as _MC
-        _dl = _MC(model_paths="mace-mp-0-medium", device="cpu", default_dtype="float32")
-        del _dl
+        from mace.calculators import mace_mp
+
+        calc = mace_mp(
+            model="medium",       # or "small", "large", or a full URL/path
+            dispersion=False,
+            default_dtype="float64",
+            device="cuda"          # or "cpu"
+        )
+        print("Model downloaded to ~/.cache/mace/")
+
         model_files = sorted(mace_cache_dir.glob("*mace*"))
         if not model_files:
             raise RuntimeError(
@@ -298,14 +305,14 @@ def main() -> None:
     if pending:
         print(f"Computing {len(pending)} orientations with {N_WORKERS} workers …")
         t_all = time.time()
-        ctx = mp.get_context("spawn")
+        ctx = mp.get_context("spawn") # Explicitly get the "spawn" multiprocessing context 
         with ctx.Pool(
-            processes=N_WORKERS,
-            initializer=_worker_init,
-            initargs=(model_path, device, "float32"),
-        ) as pool:
-            for orient_idx, V_k in pool.imap_unordered(_worker_orient, pending):
-                V_orient[orient_idx] = V_k
+            processes=N_WORKERS, # Define N_WORKERS processes 
+            initializer=_worker_init, # For each worker proccess, immediately upon starting, calls _worker_init ( load MACE once per worker process.)
+            initargs=(model_path, device, "float32"), # pass args into the initialzer function
+        ) as pool:  # Creates a proccess pool of N_WORKERS workers.
+            for orient_idx, V_k in pool.imap_unordered(_worker_orient, pending): # dispatches each tuple in pending to_worker_orient accross the pool. imap_unordered yields results as soon as each task finishes, in completion order (not submission order) - so a fast orientation isn't stuck waiting behind a slow one
+                V_orient[orient_idx] = V_k 
                 shard = shard_dir / f"orient_{orient_idx:02d}.npy"
                 np.save(str(shard), V_k)
                 n_done = N_ORIENT - len(pending) + int(shard.exists())
