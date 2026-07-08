@@ -1,0 +1,209 @@
+=== Run 4 (use_forces=False, k%100 checkpoint) started Fri  3 Jul 2026 03:04:52 EDT ===
+Device: cpu   workers: 6
+Loading ZIF-8 from /Users/cgtetsas/Library/CloudStorage/OneDrive-UniversityofWaterloo/UWaterloo/Manuscript/2026/ALF/cDFT/porecdft/structure/mofs/cif/ZIF-8.cif
+ZIF-8: 276 atoms, cell = [16.991 16.991 16.991]
+Grid: (12, 12, 12) = 1728 points, dV = 2.839 Å³
+Computing hard-core mask (cutoff = 2.0 Å) …
+  714/1728 accessible (41.3 %)
+Orientations: 20 Fibonacci directions
+Using cached MACE model: /Users/cgtetsas/.cache/mace/20231203mace128L1_epoch199model
+Computing 20 orientations with 6 workers …
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 03/20  pt 100/714  ETA 571.7 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 02/20  pt 100/714  ETA 574.2 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 06/20  pt 100/714  ETA 574.5 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 05/20  pt 100/714  ETA 575.4 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 01/20  pt 100/714  ETA 576.3 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 04/20  pt 100/714  ETA 583.5 min
+  orient 05/20  pt 200/714  ETA 486.1 min
+  orient 03/20  pt 200/714  ETA 486.3 min
+  orient 06/20  pt 200/714  ETA 486.8 min
+  orient 01/20  pt 200/714  ETA 487.0 min
+  orient 02/20  pt 200/714  ETA 487.1 min
+  orient 04/20  pt 200/714  ETA 497.1 min
+  orient 01/20  pt 300/714  ETA 345.0 min
+  orient 05/20  pt 300/714  ETA 345.7 min
+  orient 03/20  pt 300/714  ETA 346.3 min
+  orient 06/20  pt 300/714  ETA 346.4 min
+  orient 02/20  pt 300/714  ETA 346.7 min
+  orient 04/20  pt 300/714  ETA 350.4 min
+  orient 01/20  pt 400/714  ETA 234.8 min
+  orient 05/20  pt 400/714  ETA 235.0 min
+  orient 03/20  pt 400/714  ETA 235.0 min
+  orient 06/20  pt 400/714  ETA 235.0 min
+  orient 02/20  pt 400/714  ETA 235.1 min
+  orient 04/20  pt 400/714  ETA 235.3 min
+  orient 01/20  pt 500/714  ETA 129.8 min
+  orient 05/20  pt 500/714  ETA 129.9 min
+  orient 06/20  pt 500/714  ETA 129.9 min
+  orient 03/20  pt 500/714  ETA 129.9 min
+  orient 02/20  pt 500/714  ETA 130.0 min
+  orient 04/20  pt 500/714  ETA 130.1 min
+  orient 01/20  pt 600/714  ETA 58.4 min
+  orient 05/20  pt 600/714  ETA 58.5 min
+  orient 06/20  pt 600/714  ETA 58.5 min
+  orient 03/20  pt 600/714  ETA 58.5 min
+  orient 02/20  pt 600/714  ETA 58.5 min
+  orient 04/20  pt 600/714  ETA 58.6 min
+  orient 01/20  pt 700/714  ETA 6.2 min
+  orient 05/20  pt 700/714  ETA 6.2 min
+  orient 06/20  pt 700/714  ETA 6.2 min
+  orient 03/20  pt 700/714  ETA 6.2 min
+  orient 02/20  pt 700/714  ETA 6.2 min
+  orient 01/20  done in 312.4 min  E_int: [-2639, 139927] K
+  shard 00 saved  (18808s elapsed)
+  orient 05/20  done in 312.6 min  E_int: [-2578, 150194] K
+  shard 04 saved  (18821s elapsed)
+  orient 06/20  done in 312.7 min  E_int: [-2573, 160743] K
+  shard 05 saved  (18830s elapsed)
+  orient 03/20  done in 312.8 min  E_int: [-2607, 143376] K
+  shard 02 saved  (18831s elapsed)
+  orient 02/20  done in 312.8 min  E_int: [-2541, 151336] K
+  shard 01 saved  (18835s elapsed)
+  orient 04/20  pt 700/714  ETA 6.3 min
+  orient 04/20  done in 313.5 min  E_int: [-2505, 159126] K
+  shard 03 saved  (18875s elapsed)
+  orient 07/20  pt 100/714  ETA 26.8 min
+  orient 08/20  pt 100/714  ETA 26.6 min
+  orient 09/20  pt 100/714  ETA 26.9 min
+  orient 10/20  pt 100/714  ETA 26.9 min
+  orient 11/20  pt 100/714  ETA 27.0 min
+  orient 12/20  pt 100/714  ETA 27.7 min
+  orient 07/20  pt 200/714  ETA 22.2 min
+  orient 08/20  pt 200/714  ETA 22.2 min
+  orient 09/20  pt 200/714  ETA 22.4 min
+  orient 10/20  pt 200/714  ETA 22.4 min
+  orient 11/20  pt 200/714  ETA 22.4 min
+  orient 12/20  pt 200/714  ETA 23.1 min
+  orient 07/20  pt 300/714  ETA 17.9 min
+  orient 08/20  pt 300/714  ETA 17.8 min
+  orient 09/20  pt 300/714  ETA 17.9 min
+  orient 10/20  pt 300/714  ETA 18.0 min
+  orient 11/20  pt 300/714  ETA 18.0 min
+  orient 12/20  pt 300/714  ETA 18.5 min
+  orient 07/20  pt 400/714  ETA 13.5 min
+  orient 08/20  pt 400/714  ETA 13.4 min
+  orient 09/20  pt 400/714  ETA 13.5 min
+  orient 10/20  pt 400/714  ETA 13.6 min
+  orient 11/20  pt 400/714  ETA 13.6 min
+  orient 12/20  pt 400/714  ETA 13.9 min
+  orient 07/20  pt 500/714  ETA 9.1 min
+  orient 08/20  pt 500/714  ETA 9.1 min
+  orient 09/20  pt 500/714  ETA 9.1 min
+  orient 10/20  pt 500/714  ETA 9.1 min
+  orient 11/20  pt 500/714  ETA 9.1 min
+  orient 12/20  pt 500/714  ETA 9.4 min
+  orient 07/20  pt 600/714  ETA 4.8 min
+  orient 08/20  pt 600/714  ETA 4.8 min
+  orient 09/20  pt 600/714  ETA 4.8 min
+  orient 10/20  pt 600/714  ETA 4.8 min
+  orient 11/20  pt 600/714  ETA 4.8 min
+  orient 12/20  pt 600/714  ETA 5.0 min
+  orient 07/20  pt 700/714  ETA 0.6 min
+  orient 08/20  pt 700/714  ETA 0.6 min
+  orient 09/20  pt 700/714  ETA 0.6 min
+  orient 07/20  done in 29.9 min  E_int: [-2609, 140117] K
+  shard 06 saved  (20601s elapsed)
+  orient 10/20  pt 700/714  ETA 0.6 min
+  orient 11/20  pt 700/714  ETA 0.6 min
+  orient 08/20  done in 29.8 min  E_int: [-2526, 148589] K
+  shard 07 saved  (20609s elapsed)
+  orient 09/20  done in 30.0 min  E_int: [-2628, 135252] K
+  shard 08 saved  (20629s elapsed)
+  orient 10/20  done in 30.1 min  E_int: [-2601, 133453] K
+  shard 09 saved  (20635s elapsed)
+  orient 11/20  done in 30.1 min  E_int: [-2557, 137709] K
+  shard 10 saved  (20640s elapsed)
+  orient 12/20  pt 700/714  ETA 0.6 min
+  orient 12/20  done in 31.0 min  E_int: [-2633, 140604] K
+  shard 11 saved  (20735s elapsed)
+  orient 13/20  pt 100/714  ETA 25.6 min
+  orient 14/20  pt 100/714  ETA 25.5 min
+  orient 15/20  pt 100/714  ETA 25.6 min
+  orient 16/20  pt 100/714  ETA 25.6 min
+  orient 17/20  pt 100/714  ETA 25.6 min
+  orient 18/20  pt 100/714  ETA 26.4 min
+  orient 13/20  pt 200/714  ETA 21.2 min
+  orient 14/20  pt 200/714  ETA 21.1 min
+  orient 15/20  pt 200/714  ETA 21.3 min
+  orient 16/20  pt 200/714  ETA 21.3 min
+  orient 17/20  pt 200/714  ETA 21.3 min
+  orient 18/20  pt 200/714  ETA 22.0 min
+  orient 13/20  pt 300/714  ETA 17.0 min
+  orient 14/20  pt 300/714  ETA 17.0 min
+  orient 15/20  pt 300/714  ETA 17.1 min
+  orient 16/20  pt 300/714  ETA 17.1 min
+  orient 17/20  pt 300/714  ETA 17.1 min
+  orient 18/20  pt 300/714  ETA 17.7 min
+  orient 13/20  pt 400/714  ETA 12.9 min
+  orient 14/20  pt 400/714  ETA 12.9 min
+  orient 15/20  pt 400/714  ETA 12.9 min
+  orient 16/20  pt 400/714  ETA 13.0 min
+  orient 17/20  pt 400/714  ETA 13.0 min
+  orient 18/20  pt 400/714  ETA 13.4 min
+  orient 13/20  pt 500/714  ETA 8.8 min
+  orient 14/20  pt 500/714  ETA 8.7 min
+  orient 15/20  pt 500/714  ETA 8.8 min
+  orient 16/20  pt 500/714  ETA 8.8 min
+  orient 17/20  pt 500/714  ETA 8.8 min
+  orient 18/20  pt 500/714  ETA 9.1 min
+  orient 13/20  pt 600/714  ETA 4.7 min
+  orient 14/20  pt 600/714  ETA 4.6 min
+  orient 15/20  pt 600/714  ETA 4.7 min
+  orient 16/20  pt 600/714  ETA 4.7 min
+  orient 17/20  pt 600/714  ETA 4.7 min
+  orient 18/20  pt 600/714  ETA 4.8 min
+  orient 13/20  pt 700/714  ETA 0.6 min
+  orient 14/20  pt 700/714  ETA 0.6 min
+  orient 13/20  done in 29.2 min  E_int: [-2584, 150662] K
+  shard 12 saved  (22353s elapsed)
+  orient 14/20  done in 29.1 min  E_int: [-2575, 138407] K
+  shard 13 saved  (22354s elapsed)
+  orient 15/20  pt 700/714  ETA 0.6 min
+  orient 16/20  pt 700/714  ETA 0.6 min
+  orient 17/20  pt 700/714  ETA 0.6 min
+  orient 15/20  done in 29.3 min  E_int: [-2534, 161691] K
+  shard 14 saved  (22387s elapsed)
+  orient 16/20  done in 29.4 min  E_int: [-2537, 147762] K
+  shard 15 saved  (22399s elapsed)
+  orient 17/20  done in 29.4 min  E_int: [-2523, 159818] K
+  shard 16 saved  (22402s elapsed)
+  orient 18/20  pt 700/714  ETA 0.6 min
+  orient 18/20  done in 30.1 min  E_int: [-2607, 140032] K
+  shard 17 saved  (22542s elapsed)
+  orient 19/20  pt 100/714  ETA 23.7 min
+  orient 20/20  pt 100/714  ETA 23.6 min
+  orient 20/20  pt 200/714  ETA 19.3 min
+  orient 19/20  pt 200/714  ETA 19.4 min
+  orient 20/20  pt 300/714  ETA 15.5 min
+  orient 19/20  pt 300/714  ETA 15.5 min
+  orient 20/20  pt 400/714  ETA 23.9 min
+  orient 19/20  pt 400/714  ETA 23.9 min
+  orient 19/20  pt 500/714  ETA 25.7 min
+  orient 20/20  pt 500/714  ETA 26.1 min
+  orient 19/20  pt 600/714  ETA 12.2 min
+  orient 20/20  pt 600/714  ETA 12.3 min
+  orient 19/20  pt 700/714  ETA 1.4 min
+  orient 20/20  pt 700/714  ETA 1.4 min
+  orient 19/20  done in 68.6 min  E_int: [-2537, 150792] K
+  shard 18 saved  (26471s elapsed)
+  orient 20/20  done in 68.8 min  E_int: [-2631, 140584] K
+  shard 19 saved  (26484s elapsed)
+All orientations done in 441.4 min
+
+Saved Vext to /Users/cgtetsas/Library/CloudStorage/OneDrive-UniversityofWaterloo/UWaterloo/Manuscript/2026/ALF/cDFT/porecdft/applications/zif8_co2/results/vext_cache/vext_mace_T298K.npy
+  shape (12, 12, 12)
+  min  = -2326 K
+  max  = 28809 K
+  mean = 2707.4 K

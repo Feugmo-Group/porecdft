@@ -1,0 +1,45 @@
+=== Run 4 (use_forces=False, k%100 checkpoint) started Fri  3 Jul 2026 03:04:52 EDT ===
+Device: cpu   workers: 6
+Loading ZIF-8 from /Users/cgtetsas/Library/CloudStorage/OneDrive-UniversityofWaterloo/UWaterloo/Manuscript/2026/ALF/cDFT/porecdft/structure/mofs/cif/ZIF-8.cif
+ZIF-8: 276 atoms, cell = [16.991 16.991 16.991]
+Grid: (12, 12, 12) = 1728 points, dV = 2.839 Å³
+Computing hard-core mask (cutoff = 2.0 Å) …
+  714/1728 accessible (41.3 %)
+Orientations: 20 Fibonacci directions
+Using cached MACE model: /Users/cgtetsas/.cache/mace/20231203mace128L1_epoch199model
+Computing 20 orientations with 6 workers …
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+WARNING:root:Default dtype float32 does not match model dtype float64, converting models to float32.
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 03/20  pt 100/714  ETA 571.7 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 02/20  pt 100/714  ETA 574.2 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 06/20  pt 100/714  ETA 574.5 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 05/20  pt 100/714  ETA 575.4 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 01/20  pt 100/714  ETA 576.3 min
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+  orient 04/20  pt 100/714  ETA 583.5 min
+  orient 05/20  pt 200/714  ETA 486.1 min
+  orient 03/20  pt 200/714  ETA 486.3 min
+  orient 06/20  pt 200/714  ETA 486.8 min
+  orient 01/20  pt 200/714  ETA 487.0 min
+  orient 02/20  pt 200/714  ETA 487.1 min
+  orient 04/20  pt 200/714  ETA 497.1 min
+  orient 01/20  pt 300/714  ETA 345.0 min
+  orient 05/20  pt 300/714  ETA 345.7 min
+  orient 03/20  pt 300/714  ETA 346.3 min
+  orient 06/20  pt 300/714  ETA 346.4 min
+  orient 02/20  pt 300/714  ETA 346.7 min
+  orient 04/20  pt 300/714  ETA 350.4 min
+  orient 01/20  pt 400/714  ETA 234.8 min
+  orient 05/20  pt 400/714  ETA 235.0 min
+  orient 03/20  pt 400/714  ETA 235.0 min
+  orient 06/20  pt 400/714  ETA 235.0 min
+  orient 02/20  pt 400/714  ETA 235.1 min
