@@ -132,58 +132,99 @@ Classical force fields (LJ, Coulomb, Morse) require empirical parameters for eve
 
 In porecdft the MLIP is used **only once**, in a pre-computation step, to fill a 3D Vext grid at the desired temperature. The cDFT solver never calls the MLIP during the pressure sweep — it reads the cached grid through `TabulatedPotential`. This separation keeps the solver fast while letting the potential be as expensive as needed.
 
-The `MLIPPotential` adapter (`forcefield/mlip.py`) wraps any ASE-compatible calculator into the `Potential` interface expected by `build_vext_on_grid`. It evaluates the total host + single-adsorbate-molecule energy at every grid point and every sampled orientation, subtracts the isolated-molecule reference, and stores the host–adsorbate interaction energy. Energy caps (`v_reject_below_K`, `v_cap_above_K`) remove unphysical divergences in the overlap regions before orientation averaging.
+The `ASEPotential` adapter (`forcefield/mlip.py`) wraps any ASE-compatible calculator into the `Potential` interface. It places a fluid molecule at a grid point, calls the calculator to get the total energy of the host + molecule system, and subtracts the isolated host and molecule reference energies to obtain the interaction energy. Grid points inside the hard-core radius of any framework atom are excluded before the MLIP is ever called, preventing unphysical divergences.
 
-The **temperature dependence** of the Vext grid is contained entirely in the Boltzmann-weighted orientation average, not in the per-orientation energies. This means that once the per-orientation energies are computed at a set of grid points, re-averaging at a new temperature is a seconds-long NumPy operation (`rebuild_vext_multi_T.py`) — no MLIP re-evaluation required.
+The **temperature dependence** of the Vext grid lives entirely in the Boltzmann-weighted orientation average, not in the per-orientation energies. The raw per-orientation interaction energies are temperature-independent; only the averaging step uses T. This means re-averaging at a new temperature is a seconds-long NumPy operation (`rebuild_vext_multi_T.py`) — no MLIP re-evaluation required.
 
-`TabulatedPotential` is the bridge between any MLIP and the cDFT solver. The workflow has three steps:
+`TabulatedPotential` (`forcefield/mlip.py`) is the bridge between the cached MLIP grid and the cDFT solver. It wraps the 3D array with trilinear interpolation and periodic boundary conditions, presenting it through the same `Potential` interface as `LJPotential` or `CoulombPotential`. The solver never knows — or needs to know — that the potential came from an MLIP rather than an analytic formula.
 
-**Step 1 — Compute V_ext on a coarse grid with the MLIP.**
-Any MLIP that implements an ASE/pymatgen calculator (MACE-MP-0, NequIP, Allegro, CHGNet, …) can be used. The orientation average is the rotational free energy, not a bare sum:
+#### What MACE-MP-0 is and where it comes from
 
+MACE-MP-0 is a universal neural-network interatomic potential trained on the Materials Project database (73 elements, DFT/PBE energies). It takes a list of atomic species and Cartesian positions and returns a total energy and forces. Unlike classical force fields it requires no per-system parameter fitting — the same model handles ZIF-8, ALF, zeolites, and most inorganic materials out of the box.
+
+The model checkpoint (~50 MB) is **not shipped in this repository** — large binary files do not belong in git. `MACECalculator` downloads it automatically to `~/.cache/mace/` the first time it is called. `build_vext_mace.py` handles this transparently: if the file is absent it downloads it in the main process before spawning workers.
+
+#### Three-step pipeline
+
+**Step 1 — Pre-compute V_ext on a coarse grid (done once, ~4 h on 6 CPU cores)**
+
+`applications/zif8_co2/notebooks/build_vext_mace.py` carries out this step for CO₂ / ZIF-8. What it does:
+
+1. Loads ZIF-8 (276 atoms) from the CIF and builds a 12³ grid (spacing 1.4 Å, 1728 points) over the unit cell.
+2. Marks grid points within 2 Å of any framework atom as inaccessible (hard-core exclusion).
+3. Generates 20 quasi-uniform CO₂ orientations by Fibonacci-sphere sampling.
+4. For each orientation, places the 3-site rigid EPM2 CO₂ at every accessible grid point, calls MACE-MP-0, and records the interaction energy:
+   ```
+   E_int(r, Ω) = E(ZIF-8 + CO₂ at r with orientation Ω) − E(ZIF-8) − E(CO₂ in vacuum)
+   ```
+5. Boltzmann-averages the 20 per-orientation energies into a single V_ext(r; T):
+   ```
+   V_ext(r; T) = −k_B T · ln [ (1/20) Σ_Ω exp(−E_int(r, Ω) / k_B T) ]
+   ```
+6. Saves the 3D grid and lattice to `results/vext_cache/vext_mace_T298K.npy`.
+
+Each orientation is checkpointed to a shard so the run can be resumed if interrupted.
+
+To run:
+```bash
+cd porecdft
+/opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/python \
+    applications/zif8_co2/notebooks/build_vext_mace.py
 ```
-V_ext(r; T) = −k_B T ln [ (1/N_Ω) Σ_i exp(−β V_MLIP(r; Ω_i)) ]
-```
 
-For CO₂ in ZIF-8 with MACE-MP-0:
+**Step 2 — Load the cached grid**
 
 ```python
-from mace.calculators import MACECalculator
-from porecdft.vext import build_vext_on_grid, fibonacci_rotations
+from porecdft.forcefield.mlip import TabulatedPotential
 
-calc = MACECalculator(model_paths="mace-mp-0-medium", device="cpu")
-data = build_vext_on_grid(
-    host, fluid, potential=MLIPPotential(calc),
-    orientations=fibonacci_rotations(20),   # N_Ω = 20 Fibonacci sphere
-    spacing=1.4,                             # Å  (< σ_HS / 2 satisfies FMT)
-    temperature_K=298.0,
-    cache_path="vext_mace_T298K.npy",
+pot = TabulatedPotential.from_cache(
+    "applications/zif8_co2/results/vext_cache/vext_mace_T298K.npy"
 )
+# pot.vext_3d  — shape (12, 12, 12), units K
+# pot.lattice  — (3, 3) unit-cell matrix in Å
+Vext_K = pot.vext_3d
 ```
 
-The cached `.npy` file contains the orientation-averaged grid and the lattice.  Re-averaging at a new temperature costs only a numpy operation — no MLIP re-evaluation.
+The `from_cache` classmethod reads the `.npy` dict, validates the keys, and builds the `TabulatedPotential`. From this point the MLIP grid is indistinguishable from any other `Potential` object.
 
-**Step 2 — Load and interpolate at solver resolution.**
-`TabulatedPotential` wraps the cached array with trilinear interpolation, upsampling to any finer solver grid:
-
-```python
-from porecdft.forcefield import TabulatedPotential
-
-vext_data = np.load("vext_mace_T298K.npy", allow_pickle=True).item()
-pot = TabulatedPotential(
-    grid_values=vext_data["vext_avg"],
-    lattice=vext_data["lattice"],
-)
-```
-
-**Step 3 — Run the cDFT solver exactly as with analytic potentials.**
+**Step 3 — Run the cDFT pressure sweep**
 
 ```python
+import numpy as np
 from porecdft.solver import anderson_solve
-from porecdft.functional import make_fmt_weights_hat, compute_c1, bulk_c1
+from porecdft.functional import make_k_grid, make_fmt_weights_hat, compute_c1, bulk_c1
+from porecdft.eos import CO2_SW
 
-result = anderson_solve(rho0, rho_bulk, vext3d, T_K,
-                        c1_callable, c1_bulk, ...)
+T_K     = 298.0
+SIGMA   = 3.017   # CO₂ EPM2 hard-sphere diameter (Å)
+RHO_MAX = 0.45 * 6.0 / (np.pi * SIGMA**3)
+
+Nx, Ny, Nz = Vext_K.shape
+Lx = Ly = Lz = np.linalg.norm(pot.lattice[0])   # ZIF-8 is cubic
+dV  = Lx * Ly * Lz / (Nx * Ny * Nz)
+
+KX, KY, KZ, K = make_k_grid((Nx, Ny, Nz), dx=Lx/Nx, dy=Ly/Ny, dz=Lz/Nz)
+w2_hat, w3_hat, w2vec_hat = make_fmt_weights_hat(K, KX, KY, KZ, SIGMA)
+
+def c1_fn(rho):
+    from porecdft.functional import compute_weighted_densities
+    wd = compute_weighted_densities(rho, w2_hat, w3_hat, w2vec_hat, SIGMA)
+    return np.asarray(compute_c1(rho, wd, w2_hat, w3_hat, w2vec_hat, SIGMA, model="aWBII"))
+
+access = np.isfinite(Vext_K) & (Vext_K < 50.0 * T_K)
+rho_prev = rho_prev_b = None
+for P in [1.0, 5.0, 10.0, 25.0]:   # bar
+    rho_b = float(CO2_SW.bulk_density(P, T_K))
+    c1_b  = bulk_c1(rho_b, SIGMA, model="aWBII")
+    rho0  = (np.minimum(rho_b * np.exp(np.clip(-Vext_K / T_K, -50, 20)), RHO_MAX)
+             if rho_prev is None
+             else np.where(access, np.clip(rho_prev * rho_b / rho_prev_b, 1e-16, RHO_MAX), 1e-16))
+    res = anderson_solve(rho0, rho_b, Vext_K, T_K, c1_fn, c1_b,
+                         m=8, beta=0.1, max_iter=5000, tol=1e-6,
+                         accessibility_mask=access, rho_max=RHO_MAX)
+    N = float(res.rho.sum() * dV)
+    print(f"P = {P:5.1f} bar   N = {N:.3f} mol/u.c.   conv = {res.converged}")
+    rho_prev, rho_prev_b = res.rho.copy(), rho_b
 ```
 
 **Validated example — CO₂ / ZIF-8 at 273, 298, 323 K** (`applications/zif8_co2/`):
@@ -194,7 +235,7 @@ result = anderson_solve(rho0, rho_bulk, vext3d, T_K,
 | 298 | ~7.6 | ~3.0 |
 | 323 | ~6.1 | ~2.0 |
 
-Scripts: `build_vext_mace.py` (MACE grid, ~5 h on 6 CPU cores, 12³ grid, N_Ω = 20) · `rebuild_vext_multi_T.py` (re-average at new T, seconds) · `make_isotherm_zif8_multi_T.py` (FMT-aWBII isotherm, ~72 s for all three T).
+Scripts: `build_vext_mace.py` (MACE grid, ~4 h on 6 CPU cores, 12³ grid, N_Ω = 20) · `rebuild_vext_multi_T.py` (re-average at new T, seconds) · `make_isotherm_zif8_multi_T.py` (FMT-aWBII isotherm, ~72 s for all three T).
 
 ---
 
