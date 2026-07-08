@@ -40,6 +40,9 @@ uv sync --extra jax
 # CPU + JAX + gradient-based solvers (optax, optimistix)
 uv sync --extra optim
 
+# MLIP support — MACE-MP-0, NequIP, Allegro via ASE (adds mace-torch + PyTorch)
+uv sync --extra mlip
+
 # GPU — CUDA JAX + optax + NVIDIA Warp (all of the above)
 uv sync --extra gpu
 ```
@@ -50,6 +53,7 @@ Or with pip:
 pip install -e .            # CPU core (numpy, scipy, hydra, omegaconf)
 pip install -e ".[jax]"     # + JAX
 pip install -e ".[optim]"   # + JAX + optax + optimistix
+pip install -e ".[mlip]"    # + mace-torch + ase (MLIP Vext pipeline)
 pip install -e ".[gpu]"     # + CUDA JAX + optax + Warp
 ```
 
@@ -143,6 +147,74 @@ The **temperature dependence** of the Vext grid lives entirely in the Boltzmann-
 MACE-MP-0 is a universal neural-network interatomic potential trained on the Materials Project database (73 elements, DFT/PBE energies). It takes a list of atomic species and Cartesian positions and returns a total energy and forces. Unlike classical force fields it requires no per-system parameter fitting — the same model handles ZIF-8, ALF, zeolites, and most inorganic materials out of the box.
 
 The model checkpoint (~50 MB) is **not shipped in this repository** — large binary files do not belong in git. `MACECalculator` downloads it automatically to `~/.cache/mace/` the first time it is called. `build_vext_mace.py` handles this transparently: if the file is absent it downloads it in the main process before spawning workers.
+
+#### Installing MACE-MP-0 from scratch
+
+**Step A — Install the Python package**
+
+`mace-torch` is not part of the default porecdft install. Add it with:
+
+```bash
+# with uv (recommended — keeps your porecdft env intact)
+uv sync --extra mlip
+
+# or with pip directly into your active environment
+pip install "mace-torch>=0.3"
+```
+
+`mace-torch` pulls in PyTorch (≥ 2.0), ASE, e3nn, and several small utilities automatically. Tested with mace-torch 0.3.16 + torch 2.12.1.
+
+> **conda / jax environment note**: if you are using the project's `jax` conda env (`conda activate jax`), install with pip inside it:
+> ```bash
+> /opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/pip install "mace-torch>=0.3"
+> ```
+> Do not install via `conda install` — the conda-forge torch and pip-torch conflict.
+
+**Step B — Download the model checkpoint (one time, ~50 MB)**
+
+Run this once in Python (or just let `build_vext_mace.py` do it automatically):
+
+```python
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"   # needed on macOS
+
+from mace.calculators import MACECalculator
+calc = MACECalculator(model_paths="mace-mp-0-medium", device="cpu",
+                      default_dtype="float32")
+print("Model downloaded to ~/.cache/mace/")
+```
+
+Or from the command line:
+
+```bash
+KMP_DUPLICATE_LIB_OK=TRUE \
+  /opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/python -c "
+import os; os.environ['KMP_DUPLICATE_LIB_OK']='TRUE'
+from mace.calculators import MACECalculator
+MACECalculator(model_paths='mace-mp-0-medium', device='cpu', default_dtype='float32')
+print('done')
+"
+```
+
+The file lands in `~/.cache/mace/` with a name like `20231210mace128L0_energy_epoch249model`. Subsequent runs load it from cache with no network access.
+
+> **macOS OpenMP note**: PyTorch and some conda packages both ship `libomp.dylib`, causing an `OMP: Error #15` crash. The workaround `KMP_DUPLICATE_LIB_OK=TRUE` (already set in `build_vext_mace.py`) silences it safely for inference workloads.
+
+**Step C — Verify**
+
+```bash
+KMP_DUPLICATE_LIB_OK=TRUE \
+  /opt/homebrew/Caskroom/miniconda/base/envs/jax/bin/python -c "
+import os; os.environ['KMP_DUPLICATE_LIB_OK']='TRUE'
+from mace.calculators import MACECalculator
+from ase import Atoms
+calc = MACECalculator(model_paths='mace-mp-0-medium', device='cpu', default_dtype='float32')
+h2o = Atoms('H2O', positions=[[0,0,0],[0,0,0.96],[0,0.96*0.866,0.96*0.5]], pbc=False)
+h2o.calc = calc
+print(f'H2O energy: {h2o.get_potential_energy():.4f} eV')   # expect ~ -14.8 eV
+print('MACE-MP-0 working.')
+"
+```
 
 #### Three-step pipeline
 
