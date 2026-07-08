@@ -256,16 +256,28 @@ def main() -> None:
     dirs = fibonacci_directions(N_ORIENT)
     print(f"Orientations: {N_ORIENT} Fibonacci directions")
 
-    # 5. Locate cached MACE model
+    # 5. Locate or auto-download MACE-MP-0 model.
+    #    The model (~50 MB) is not shipped in the repo; MACECalculator downloads
+    #    it to ~/.cache/mace/ on first call.  We trigger this in the main process
+    #    before spawning workers so that each worker can load the already-cached
+    #    file rather than racing to download it.
     mace_cache_dir = Path.home() / ".cache" / "mace"
-    model_files    = list(mace_cache_dir.glob("*mace*"))
+    model_files    = sorted(mace_cache_dir.glob("*mace*")) if mace_cache_dir.exists() else []
     if not model_files:
-        raise FileNotFoundError(
-            "MACE-MP model not found in ~/.cache/mace/.  "
-            "Run once without multiprocessing to auto-download."
-        )
-    model_path = str(model_files[0])
-    print(f"Using cached MACE model: {model_path}")
+        print("MACE-MP-0 model not found in ~/.cache/mace/ — downloading now "
+              "(one-time, ~50 MB) …", flush=True)
+        import torch
+        from mace.calculators import MACECalculator as _MC
+        _dl = _MC(model_paths="mace-mp-0-medium", device="cpu", default_dtype="float32")
+        del _dl
+        model_files = sorted(mace_cache_dir.glob("*mace*"))
+        if not model_files:
+            raise RuntimeError(
+                "MACE-MP-0 download failed. Check your internet connection and "
+                "that mace-torch is installed:  pip install mace-torch"
+            )
+    model_path = str(model_files[-1])   # use most-recent if multiple versions cached
+    print(f"Using MACE model: {model_path}")
 
     # 6. Orientation shards
     shard_dir = CACHE_DIR / "orient_shards"
