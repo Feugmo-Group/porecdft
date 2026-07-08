@@ -53,6 +53,10 @@ optim = [
   "optax>=0.2",
   "optimistix>=0.0.10",
 ]
+mlip = [
+  "mace-torch>=0.3",
+  "ase>=3.22",
+]
 warp = [
   "warp-lang>=1.4",
 ]
@@ -62,6 +66,7 @@ gpu = [
 ]
 all = [
   "porecdft[gpu]",
+  "porecdft[mlip]",
 ]
 
 [dependency-groups]
