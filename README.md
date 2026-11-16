@@ -689,6 +689,42 @@ See the [Configuration system](#configuration-system) section for the full `Comp
 
 ---
 
+## Dynamics (prototype): `porecdft.dynamics`
+
+Dynamic classical DFT (DDFT) on the same grid, free energy and external potential as the static solvers. It adds a
+mobility and time, so that uptake and release curves, not only isotherms, can be computed:
+
+```
+dρ/dt = ∇·[ D (∇ρ + ρ ∇v) ],     v = βV_ext − c⁽¹⁾[ρ]
+```
+
+The stationary state with no flux is the Euler–Lagrange equation of the static solvers, so the long-time limit of a
+closed run is the `anderson_solve` result. Scharfetter–Gummel finite-volume fluxes, backward Euler, inexact
+Newton–Krylov; voxels in `fixed` are held at a reservoir density.
+
+```python
+from porecdft.dynamics import DDFTProblem, crank_slab, fractional_uptake, time_to_fraction
+
+# c1_fn must be JAX-traceable for jax_c1=True (jit-compiled matrix-free flux, exact Jacobian-vector products)
+problem = DDFTProblem(Vext_K, T_K, spacing=(h, h, h), D=1.0,          # D in Å²/ps
+                      c1_fn=c1_jax, jax_c1=True,
+                      periodic=(False, True, True), access=access, fixed=reservoir_mask)
+result = problem.run(rho0, t_end=2000.0, dt=1.0, rho_fixed=rho_gas)   # N(t) in result.N
+steady = problem.relax(rho0, rho_fixed=rho_gas)                       # stationary state
+```
+
+Tests (`tests/test_dynamics.py`, 13 tests, about 7 s) check the exact limits: equilibrium limit against the
+Boltzmann solution and against `anderson_solve` with the FMT-aWBII functional (relative difference 2e-9, N conserved
+to 1e-13); decay of a long-wavelength mode at the rate D q² Γ with Γ from the bulk functional (within 0.1 %); the
+double-well hopping rate against Kramers' formula (2.7 to 5.3 % below the leading-order result for βΔE from 8 to 15,
+grid-converged to 0.04 %); and slab uptake against the Crank series (within 0.3 %).
+
+Prototype limits: one species; constant, per-axis or voxel-field mobility (no loading dependence or Maxwell–Stefan
+coupling); isothermal; first order in time; the preconditioner is a sparse LU, so grids beyond about 10⁵ voxels need an
+AMG or line-implicit preconditioner. Mobilities must come from molecular dynamics; none are provided here.
+
+---
+
 ## Machine-learning interatomic potentials (MLIP)
 
 Classical force fields (LJ, Coulomb, Morse) require empirical parameters for every host–adsorbate atom-type pair and assume pairwise-additive, geometry-fixed interactions. MLIPs remove these constraints: universal models such as MACE-MP-0, NequIP, Allegro, and CHGNet predict total interaction energies from atomic positions alone, capturing many-body polarization, open-shell metal-site effects, and framework flexibility without per-system parametrization.
